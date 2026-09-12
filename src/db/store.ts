@@ -140,7 +140,9 @@ export class Store {
       const e = this.all('SELECT year FROM evidences WHERE id=?', [eid])[0];
       if (!e || e.year !== t.year) throw new Error('証憑が存在しないか、年度が一致しません');
     }
-    const stamp = now();
+    const stamp = new Date(
+      Math.max(Date.now(), existing ? Date.parse(String(existing.updated_at)) + 1 : 0),
+    ).toISOString();
     this.run(
       'INSERT INTO transactions VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET transaction_date=excluded.transaction_date,description=excluded.description,status=excluded.status,source=excluded.source,kind=excluded.kind,updated_at=excluded.updated_at',
       [t.id, t.year, t.transaction_date, t.description, t.status, t.source, t.kind, stamp],
@@ -172,12 +174,26 @@ export class Store {
     });
     return t.id;
   }
+  reviseTransaction(input: unknown, reason: string) {
+    const t = transactionSchema.parse(input);
+    const existing = this.snapshot().transactions.find((v) => v.id === t.id);
+    if (!existing || existing.status !== 'confirmed' || existing.updated_at !== t.updated_at)
+      throw new Error(
+        '別の端末またはタブで仕訳が更新されました。入力内容を控えてから開き直してください',
+      );
+    this.unlockTransaction(t.id, reason);
+    const updated = this.snapshot().transactions.find((v) => v.id === t.id)!;
+    return this.saveTransaction({ ...t, updated_at: updated.updated_at });
+  }
   unlockTransaction(id: string, reason: string) {
     if (!reason.trim()) throw new Error('修正理由を入力してください');
     const t = this.snapshot().transactions.find((t) => t.id === id);
     if (!t) throw new Error('仕訳が見つかりません');
     this.assertEditable(t.year);
-    this.run("UPDATE transactions SET status='draft',updated_at=? WHERE id=?", [now(), id]);
+    this.run("UPDATE transactions SET status='draft',updated_at=? WHERE id=?", [
+      new Date(Math.max(Date.now(), Date.parse(t.updated_at || '') + 1 || 0)).toISOString(),
+      id,
+    ]);
     this.refreshEvidenceStatuses(t.year);
     this.run("UPDATE ai_extractions SET status='drafted' WHERE transaction_id=?", [id]);
     this.event('transaction_unlocked', id, { reason, before: t });
@@ -323,6 +339,30 @@ export class Store {
     }
     this.event('ai_extractions_imported', newId(), { count: values.length });
     return values.length;
+  }
+  saveReviewedExtraction(id: string, input: unknown) {
+    const s = this.snapshot(),
+      x = s.extractions.find((x) => x.id === id);
+    if (!x || x.transaction_id)
+      throw new Error('この読取候補は別の操作で処理されています。開き直してください');
+    if (s.transactions.some((t) => t.evidence_ids.includes(x.evidence_id)))
+      throw new Error(
+        'この原本には既に仕訳があります。二重計上を避けるため既存の仕訳を確認してください',
+      );
+    const t = transactionSchema.parse(input);
+    if (
+      t.evidence_ids.length !== 1 ||
+      t.evidence_ids[0] !== x.evidence_id ||
+      s.transactions.some((v) => v.id === t.id)
+    )
+      throw new Error('読取候補と仕訳が一致しません');
+    const transactionId = this.saveTransaction(t);
+    this.run('UPDATE ai_extractions SET transaction_id=?,status=? WHERE id=?', [
+      transactionId,
+      t.status === 'confirmed' ? 'confirmed' : 'drafted',
+      id,
+    ]);
+    return transactionId;
   }
   draftFromExtraction(id: string) {
     const s = this.snapshot(),
