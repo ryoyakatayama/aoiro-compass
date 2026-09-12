@@ -1,7 +1,7 @@
 {
   "name": "aoiro-compass",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "青色コンパス — 個人事業の数字と税務相談をつなぐローカルファースト会計PWA",
   "engines": {
