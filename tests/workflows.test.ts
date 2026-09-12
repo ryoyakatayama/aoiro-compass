@@ -7,6 +7,7 @@ import { report, continuity, reconciliationCandidates } from '../src/domain/acco
 import { parseBankCsv, exportCsv } from '../src/lib/csv';
 import { buildAuditFiles, defaultPackOptions, safeData, zipFiles } from '../src/lib/packs';
 import JSZip from 'jszip';
+import { ownerBalances, ownerSettlement } from '../src/domain/owner-settlement';
 const require = createRequire(import.meta.url);
 let SQL: SqlJsStatic, store: Store;
 beforeAll(async () => {
@@ -385,4 +386,102 @@ describe('明細と過年度・年度間継続性', () => {
     expect(t.lines.find((l) => l.account_id === '1600')?.debit_amount).toBe(10000);
     expect(store.snapshot().depreciations[0].closing_book_value).toBe(150000);
   });
+});
+
+it('領収書の未登録AI科目を人が選び直して確定し、再処理を拒否する', () => {
+  const ev = evidence();
+  store.atomic(() => store.upsertEvidence(ev));
+  store.atomic(() =>
+    store.importExtractions(
+      JSON.stringify({
+        schema_version: '1.0',
+        evidence_id: ev.id,
+        transaction_date: '2026-09-01',
+        vendor: 'テスト購入',
+        gross_amount: 800,
+        currency: 'JPY',
+        suggested_account: 'まだ未分類',
+        confidence: 0.5,
+      }),
+    ),
+  );
+  const x = store.snapshot().extractions[0];
+  const t = entry({
+    description: '原本を確認した経費',
+    source: 'ai',
+    evidence_ids: [ev.id],
+    lines: [
+      { account_id: '5300', debit_amount: 800, credit_amount: 0 },
+      { account_id: '3100', debit_amount: 0, credit_amount: 800 },
+    ],
+  });
+  store.atomic(() => store.saveReviewedExtraction(x.id, t));
+  expect(store.snapshot().extractions[0].status).toBe('confirmed');
+  expect(report(store.snapshot(), 2026).expense).toBe(800);
+  expect(() =>
+    store.atomic(() => store.saveReviewedExtraction(x.id, { ...t, id: newId() })),
+  ).toThrow('処理されています');
+  expect(store.snapshot().transactions).toHaveLength(1);
+});
+
+it('事業主勘定の相殺・現金精算は損益を変えず、繰り返しの相殺を拒否する', () => {
+  for (const [dr, cr, amount] of [
+    ['1000', '3000', 1000],
+    ['1600', '1000', 300],
+    ['5200', '3100', 600],
+  ] as const)
+    store.atomic(() =>
+      store.saveTransaction(
+        entry({
+          lines: [
+            { account_id: dr, debit_amount: amount, credit_amount: 0 },
+            { account_id: cr, debit_amount: 0, credit_amount: amount },
+          ],
+        }),
+      ),
+    );
+  const profit = report(store.snapshot(), 2026).profit;
+  store.atomic(() =>
+    store.saveTransaction(ownerSettlement(store.snapshot(), 2026, '2026-12-31', 'offset')),
+  );
+  expect(ownerBalances(store.snapshot(), 2026)).toEqual({ borrow: 300, lend: 0, cash: 700 });
+  expect(() => ownerSettlement(store.snapshot(), 2026, '2026-12-31', 'offset')).toThrow('対象残高');
+  store.atomic(() =>
+    store.saveTransaction(ownerSettlement(store.snapshot(), 2026, '2026-12-31', 'cash_out')),
+  );
+  expect(ownerBalances(store.snapshot(), 2026)).toEqual({ borrow: 0, lend: 0, cash: 400 });
+  expect(report(store.snapshot(), 2026).profit).toBe(profit);
+});
+
+it('本人からの現金補填は事業主貸を減らし、現金不足での精算や年度違いを拒否する', () => {
+  store.atomic(() =>
+    store.saveTransaction(
+      entry({
+        lines: [
+          { account_id: '1600', debit_amount: 250, credit_amount: 0 },
+          { account_id: '1000', debit_amount: 0, credit_amount: 250 },
+        ],
+      }),
+    ),
+  );
+  const profit = report(store.snapshot(), 2026).profit;
+  store.atomic(() =>
+    store.saveTransaction(ownerSettlement(store.snapshot(), 2026, '2026-12-31', 'cash_in')),
+  );
+  expect(ownerBalances(store.snapshot(), 2026)).toEqual({ borrow: 0, lend: 0, cash: 0 });
+  expect(report(store.snapshot(), 2026).profit).toBe(profit);
+  store.atomic(() =>
+    store.saveTransaction(
+      entry({
+        lines: [
+          { account_id: '5200', debit_amount: 600, credit_amount: 0 },
+          { account_id: '3100', debit_amount: 0, credit_amount: 600 },
+        ],
+      }),
+    ),
+  );
+  expect(() => ownerSettlement(store.snapshot(), 2026, '2026-12-31', 'cash_out')).toThrow(
+    '現金残高',
+  );
+  expect(() => ownerSettlement(store.snapshot(), 2026, '2025-12-31', 'cash_in')).toThrow();
 });
