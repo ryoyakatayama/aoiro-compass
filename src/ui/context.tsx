@@ -5,6 +5,8 @@ import type { DriveAdapter } from '../lib/drive';
 import type { LedgerSync, SyncStatus } from '../lib/ledger-sync';
 export type Page =
   | 'dashboard'
+  | 'drive'
+  | 'filing'
   | 'ledger'
   | 'evidence'
   | 'bank'

@@ -178,6 +178,7 @@ export default function Settings() {
           </button>
         </form>
       </Card>
+      <div id="drive-configuration" />
       <Card
         title="Google Driveとの連携"
         subtitle="外部から追加した原本も読み取り、アプリが作成したファイルにだけ書き込みます。"

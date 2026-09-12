@@ -9,61 +9,63 @@ export function CloudBackups({ onRestore }: { onRestore: (file: File) => void })
   const [files, setFiles] = useState<DriveFile[]>([]),
     [loaded, setLoaded] = useState(false);
   return (
-    <Card
-      title="Google Driveのバックアップ"
-      subtitle="同期した変更ごとに復元用の帳簿を残します。元の領収書はDriveの原本フォルダで管理します。"
-    >
-      <button
-        className="button secondary"
-        disabled={busy || !drive.connected}
-        onClick={() =>
-          void run(async () => {
-            setFiles(await drive.listBackups());
-            setLoaded(true);
-          })
-        }
+    <div id="cloud-backups">
+      <Card
+        title="Google Driveのバックアップ"
+        subtitle="同期した変更ごとに復元用の帳簿を残します。元の領収書はDriveの原本フォルダで管理します。"
       >
-        Driveのバックアップ履歴を表示
-      </button>
-      {loaded && !files.length && (
-        <p>バックアップはまだありません。帳簿を同期すると作成されます。</p>
-      )}
-      {files.slice(0, 40).map((file) => (
-        <div className="backup-row" key={file.id}>
-          <span>
-            {new Date(file.appProperties?.created || file.modifiedTime || '').toLocaleString(
-              'ja-JP',
-            )}{' '}
-            · {file.appProperties?.reason || '帳簿'}
-          </span>
-          <div className="actions">
-            <button
-              className="text-button"
-              disabled={busy}
-              onClick={() =>
-                void run(async () => download(file.name, await drive.downloadBackup(file)))
-              }
-            >
-              コピーを保存
-            </button>
-            <button
-              className="text-button"
-              disabled={busy}
-              onClick={() =>
-                void run(async () =>
-                  onRestore(new File([await drive.downloadBackup(file)], file.name)),
-                )
-              }
-            >
-              復元内容を確認
-            </button>
+        <button
+          className="button secondary"
+          disabled={busy || !drive.connected}
+          onClick={() =>
+            void run(async () => {
+              setFiles(await drive.listBackups());
+              setLoaded(true);
+            })
+          }
+        >
+          Driveのバックアップ履歴を表示
+        </button>
+        {loaded && !files.length && (
+          <p>バックアップはまだありません。帳簿を同期すると作成されます。</p>
+        )}
+        {files.slice(0, 40).map((file) => (
+          <div className="backup-row" key={file.id}>
+            <span>
+              {new Date(file.appProperties?.created || file.modifiedTime || '').toLocaleString(
+                'ja-JP',
+              )}{' '}
+              · {file.appProperties?.reason || '帳簿'}
+            </span>
+            <div className="actions">
+              <button
+                className="text-button"
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => download(file.name, await drive.downloadBackup(file)))
+                }
+              >
+                コピーを保存
+              </button>
+              <button
+                className="text-button"
+                disabled={busy}
+                onClick={() =>
+                  void run(async () =>
+                    onRestore(new File([await drive.downloadBackup(file)], file.name)),
+                  )
+                }
+              >
+                復元内容を確認
+              </button>
+            </div>
           </div>
-        </div>
-      ))}
-      <p className="small muted">
-        Driveのアプリ専用領域に保存されるため、通常のフォルダ一覧には出ません。ここから確認・書き出し・復元できます。独自の暗号化は行わず、Googleアカウントのアクセス権で保護します。
-      </p>
-    </Card>
+        ))}
+        <p className="small muted">
+          Driveのアプリ専用領域に保存されるため、通常のフォルダ一覧には出ません。ここから確認・書き出し・復元できます。独自の暗号化は行わず、Googleアカウントのアクセス権で保護します。
+        </p>
+      </Card>
+    </div>
   );
 }
 export function conflictTitle(key: string) {

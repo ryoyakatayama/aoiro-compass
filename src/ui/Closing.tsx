@@ -55,7 +55,7 @@ export default function Closing() {
             {fiscal.status === 'active'
               ? fatal
                 ? `締める前に、${fatal}件の対応が必要です。`
-                : '年度締めの準備が整いました。'
+                : '帳簿の必須チェックを通過しました。'
               : `${year}年は${fiscal.status === 'closed' ? '締め済み' : '過年度の閲覧専用'}です。`}
           </h2>
           <p>
@@ -69,6 +69,12 @@ export default function Closing() {
         title="帳簿・証憑の最終チェック"
         subtitle="AI監査は任意です。未実施でも年度を締められます。"
       >
+        <p>
+          申告書・控除資料・他の所得・e-Taxの送信状況は「確定申告の準備」で別途確認します。年度のロックだけでは申告は完了しません。
+        </p>
+        <button className="button secondary" onClick={() => navigate('filing')}>
+          確定申告の準備を確認
+        </button>
         <div className="closing-checks">
           {checks.map((c) => (
             <div className="closing-check" key={c.label}>
