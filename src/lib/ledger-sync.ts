@@ -1,4 +1,5 @@
 import { newId, now } from '../domain/model';
+import { archiveSetting, archiveResponsePrefix } from '../domain/archive';
 import type { Store } from '../db/store';
 import { Engine, demoMode, flushStagedBackups } from './persistence';
 import { bookKind } from './book';
@@ -24,6 +25,18 @@ const readState = (s: Store): State =>
   JSON.parse(s.setting('ledger_sync_state') || '{"heads":[],"baseline":{},"pending":[]}');
 const saveState = (s: Store, state: State) =>
   s.setSetting('ledger_sync_state', JSON.stringify(state));
+// Earlier versions staged oversized archive strings before validation failed.
+// Only these invalid, never-uploadable values are upgraded; valid revisions keep their bytes.
+export function upgradePendingArchives(pending: Revision[]) {
+  for (const doc of pending)
+    for (const [key, value] of Object.entries(doc.changes))
+      if (
+        (key === 'shared:' + archiveSetting || key.startsWith('shared:' + archiveResponsePrefix)) &&
+        typeof value === 'string' &&
+        value.length > 10000
+      )
+        doc.changes[key] = { kind: 'source_archive_setting', value };
+}
 export type SyncStatus = {
   phase: 'off' | 'waiting' | 'syncing' | 'synced' | 'conflict' | 'error';
   message: string;
@@ -108,13 +121,14 @@ export class LedgerSync {
     store.setSetting('ledger_sync_scope', scope);
     const state = readState(store),
       data = exportSyncData(store);
+    upgradePendingArchives(state.pending);
     const docs = this.make(store, changesBetween(state.baseline, data), state.heads);
     if (docs.length) {
       state.pending.push(...docs);
       state.heads = [docs.at(-1)!.id];
       state.baseline = data;
-      saveState(store, state);
     }
+    saveState(store, state);
     return state;
   }
   sync() {

@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import { dateSchema, type BankEntry } from '../domain/model';
+import { dateSchema, type Snapshot, type BankEntry } from '../domain/model';
 export function exportCsv(rows: unknown[][]) {
   return (
     '\uFEFF' +
@@ -59,3 +59,39 @@ export function parseBankCsv(
     } as Omit<BankEntry, 'id' | 'batch_id' | 'reconciliation_status' | 'transaction_id'>;
   });
 }
+
+export function journalCsv(s: Snapshot, year: number) {
+  return exportCsv([
+    [
+      '取引ID',
+      '日付',
+      '摘要',
+      '状態',
+      '期首/通常',
+      '科目コード',
+      '勘定科目',
+      '借方',
+      '貸方',
+      '税区分',
+      'メモ',
+    ],
+    ...s.transactions
+      .filter((t) => t.year === year)
+      .flatMap((t) =>
+        t.lines.map((l) => [
+          t.id,
+          t.transaction_date,
+          t.description,
+          t.status,
+          t.kind,
+          l.account_id,
+          s.accounts.find((a) => a.id === l.account_id)?.name || '',
+          l.debit_amount,
+          l.credit_amount,
+          l.tax_category,
+          l.memo,
+        ]),
+      ),
+  ]);
+}
+

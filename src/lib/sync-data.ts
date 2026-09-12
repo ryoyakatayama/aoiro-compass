@@ -9,6 +9,7 @@ import { profileSchema } from '../domain/model';
 import type { Entity, SyncData } from './sync-graph';
 import { archiveSyncValueSchema } from './sync-graph';
 import type { SqlValue } from 'sql.js';
+import { filingPrefix, validateFilingSetting } from '../domain/filing';
 
 const tables = [
   'fiscal_years',
@@ -66,6 +67,12 @@ export function exportSyncData(store: Store): SyncData {
       kind: 'source_archive_setting',
       value: String(row.value),
     };
+  for (const row of store.all('SELECT key,value FROM settings WHERE key GLOB ?', [
+    filingPrefix + '*',
+  ])) {
+    validateFilingSetting(String(row.key), String(row.value));
+    data['shared:' + String(row.key)] = String(row.value);
+  }
   return data;
 }
 export function importSyncData(store: Store, data: SyncData) {
@@ -122,6 +129,10 @@ export function importSyncData(store: Store, data: SyncData) {
       continue;
     }
     if (key === 'shared:drive_root' && typeof value === 'string') continue;
+    if (key.startsWith('shared:' + filingPrefix) && typeof value === 'string') {
+      validateFilingSetting(key.slice(7), value);
+      continue;
+    }
     if (!(tables as readonly string[]).includes(table))
       throw new Error('未対応の同期データです: ' + table);
     const entry = value as unknown as { row: Row; lines: Row[]; links: Row[] };
@@ -151,6 +162,10 @@ export function importSyncData(store: Store, data: SyncData) {
     if (key === 'shared:' + archiveSetting || key.startsWith('shared:' + archiveResponsePrefix))
       store.setSetting(key.slice(7), archiveValue(value));
   const previousRoot = store.setting('drive_root') || '';
+  store.run('DELETE FROM settings WHERE key GLOB ?', [filingPrefix + '*']);
+  for (const [key, value] of Object.entries(data))
+    if (key.startsWith('shared:' + filingPrefix) && typeof value === 'string')
+      store.setSetting(key.slice(7), value);
   const nextRoot = String(data['shared:drive_root'] || '');
   store.setSetting('drive_root', nextRoot);
   if (previousRoot !== nextRoot)

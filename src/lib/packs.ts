@@ -10,8 +10,11 @@ import {
   labels,
 } from '../domain/model';
 import { report, monthly, continuity } from '../domain/accounting';
+import { filingFiles } from '../domain/filing';
+import { bookKind } from './book';
 import { sha256, getBlob } from './persistence';
-import { exportCsv } from './csv';
+import { exportCsv, journalCsv } from './csv';
+export { journalCsv } from './csv';
 import type { DriveAdapter } from './drive';
 
 export function redactText(s: string) {
@@ -251,43 +254,14 @@ export async function buildEvidencePack(evidences: Evidence[], drive: DriveAdapt
     files[`evidence/EV_${e.id}.${e.filename.split('.').pop()}`] = await evidenceBytes(e, drive);
   return zipFiles(files);
 }
-export function journalCsv(s: Snapshot, year: number) {
-  return exportCsv([
-    [
-      '取引ID',
-      '日付',
-      '摘要',
-      '状態',
-      '期首/通常',
-      '科目コード',
-      '勘定科目',
-      '借方',
-      '貸方',
-      '税区分',
-      'メモ',
-    ],
-    ...s.transactions
-      .filter((t) => t.year === year)
-      .flatMap((t) =>
-        t.lines.map((l) => [
-          t.id,
-          t.transaction_date,
-          t.description,
-          t.status,
-          t.kind,
-          l.account_id,
-          s.accounts.find((a) => a.id === l.account_id)?.name || '',
-          l.debit_amount,
-          l.credit_amount,
-          l.tax_category,
-          l.memo,
-        ]),
-      ),
-  ]);
-}
 export async function yearArchive(s: Snapshot, year: number, sqlite: Uint8Array) {
   const r = report(s, year);
   return zipFiles({
+    ...Object.fromEntries(
+      Object.entries(filingFiles(s, year, bookKind === 'misc' ? '雑所得' : '事業所得')).map(
+        ([name, content]) => ['06_filing/' + name, content],
+      ),
+    ),
     'README.txt': `${year}年 青色コンパス保存パッケージ\nこのZIPは帳簿・証憑索引・バックアップです。申告書やe-Tax送信データではありません。\n証憑原本はDriveまたはローカル保管場所に保持されています。SQLiteは全年度の会計データを含みます。\nブラウザのデータを消去する前に、このパッケージと未アップロード原本を安全な場所へ保存してください。`,
     'manifest.json': json({
       schema_version: '1.0',
@@ -334,3 +308,4 @@ export async function yearArchive(s: Snapshot, year: number, sqlite: Uint8Array)
     ),
   });
 }
+
