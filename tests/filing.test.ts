@@ -12,12 +12,35 @@ import {
 import { filingFiles, filingState, validateFilingSetting } from '../src/domain/filing';
 import { exportSyncData, importSyncData } from '../src/lib/sync-data';
 import { revisionSchema, materialize, type Revision } from '../src/lib/sync-graph';
-import { upgradePendingArchives } from '../src/lib/ledger-sync';
+import { upgradePendingArchives, canBootstrapFromCloud } from '../src/lib/ledger-sync';
 import { archiveResponsePrefix } from '../src/domain/archive';
 const require = createRequire(import.meta.url);
 let SQL: SqlJsStatic;
 beforeAll(async () => {
   SQL = await initSqlJs({ locateFile: () => require.resolve('sql.js/dist/sql-wasm.wasm') });
+});
+it('初期状態の端末だけがDriveの帳簿を初期値より優先する', () => {
+  const remote = new Store(SQL),
+    fresh = new Store(SQL);
+  remote.saveProfile({ accounting_policy: '確認済みの方式' });
+  expect(canBootstrapFromCloud(fresh, exportSyncData(remote))).toBe(true);
+  fresh.saveProfile({ accounting_policy: '税込経理' });
+  expect(canBootstrapFromCloud(fresh, exportSyncData(remote))).toBe(false);
+  const archive = new Store(SQL);
+  archive.setSetting(
+    'filing_check_2026_sales',
+    JSON.stringify({
+      year: 2026,
+      item: 'sales',
+      status: 'ready',
+      note: '確認済',
+      updated: new Date().toISOString(),
+    }),
+  );
+  expect(canBootstrapFromCloud(archive, exportSyncData(remote))).toBe(false);
+  const otherRoot = new Store(SQL);
+  otherRoot.setSetting('drive_root', 'another-folder');
+  expect(canBootstrapFromCloud(otherRoot, exportSyncData(remote))).toBe(false);
 });
 function sample(overrides: Record<string, unknown> = {}) {
   return assetSchema.parse({
