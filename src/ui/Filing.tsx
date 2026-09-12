@@ -165,7 +165,7 @@ export default function Filing() {
         title={`資料・処理の確認リスト · 残り${unresolved}項目`}
         subtitle="「確認済み」または「該当なし」と根拠を記録できます。年度・所得区分ごとにDriveへ同期します。"
       >
-        {[...new Set(filingItems.map((i) => i.group))].map((group) => (
+        {['資料・記帳', '決算整理', '申告書の入力', '送信・保存'].map((group) => (
           <section className="filing-group" key={group}>
             <h3>{group}</h3>
             {filingItems
