@@ -2,6 +2,7 @@ import { createContext, useContext } from 'react';
 import type { Snapshot, Transaction } from '../domain/model';
 import type { Engine } from '../lib/persistence';
 import type { DriveAdapter } from '../lib/drive';
+import type { LedgerSync, SyncStatus } from '../lib/ledger-sync';
 export type Page =
   | 'dashboard'
   | 'ledger'
@@ -27,6 +28,8 @@ export interface AppContextValue {
   sync: () => Promise<void>;
   connected: boolean;
   setConnected: (v: boolean) => void;
+  ledgerSync: LedgerSync;
+  syncStatus: SyncStatus;
 }
 export const AppContext = createContext<AppContextValue | null>(null);
 export function useApp() {

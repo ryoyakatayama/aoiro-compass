@@ -16,6 +16,7 @@ import { captureFiles } from '../lib/drive';
 import { getBlob, download } from '../lib/persistence';
 import { buildEvidencePack } from '../lib/packs';
 import type { Evidence as EvidenceRecord } from '../domain/model';
+import ReceiptReviewButton from './ReceiptReview';
 export default function Evidence() {
   const { s, year, engine, drive, run, busy, openJournal, sync } = useApp();
   const [selected, setSelected] = useState<string[]>([]),
@@ -142,6 +143,7 @@ export default function Evidence() {
             {ev.length}件 / {selected.length}件選択
           </span>
           <div className="push-right actions">
+            <ReceiptReviewButton />
             <button
               className="button secondary"
               disabled={!selected.length || busy}

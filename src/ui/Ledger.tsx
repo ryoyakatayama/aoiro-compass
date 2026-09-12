@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Plus, Search, Download, Trash2, LockKeyhole, Check } from 'lucide-react';
 import { useApp } from './context';
 import { PageHeading, Card, Badge, Empty, Modal, Field } from './shared';
@@ -6,6 +6,7 @@ import { newId, today, yen, type Transaction, type JournalLine } from '../domain
 import { total } from '../domain/accounting';
 import { download } from '../lib/persistence';
 import { journalCsv } from '../lib/packs';
+import ReceiptReviewButton from './ReceiptReview';
 export default function Ledger() {
   const { s, year, openJournal } = useApp();
   const [q, setQ] = useState(''),
@@ -28,6 +29,7 @@ export default function Ledger() {
         description="売上・経費から複合仕訳まで。下書きを確かめてから正式な帳簿へ。"
         actions={
           <>
+            <ReceiptReviewButton />
             <button
               className="button secondary"
               onClick={() =>
@@ -126,8 +128,27 @@ export default function Ledger() {
                     </td>
                     <td>
                       <button className="text-button" onClick={() => openJournal(t)}>
-                        開く
+                        {t.status === 'locked' ? '見る' : '編集'}
                       </button>
+                      {s.years.find((y) => y.year === year)?.status === 'active' && (
+                        <button
+                          className="text-button"
+                          aria-label={`${t.description}を複製`}
+                          onClick={() =>
+                            openJournal({
+                              ...t,
+                              id: newId(),
+                              status: 'draft',
+                              source: 'copy',
+                              updated_at: undefined,
+                              evidence_ids: [],
+                              kind: 'normal',
+                            })
+                          }
+                        >
+                          複製
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -170,21 +191,106 @@ export function JournalEditor({
     },
   );
   const [reason, setReason] = useState('');
+  const [baseline, setBaseline] = useState(JSON.stringify(value));
+  const [accountQuery, setAccountQuery] = useState('');
+  const descriptionRef = useRef<HTMLInputElement>(null);
+  const saving = useRef(false);
+  const editingConfirmed = value.status === 'confirmed';
+  const dirty = JSON.stringify(value) !== baseline;
+  const close = () => {
+    if (
+      !saving.current &&
+      (!dirty || window.confirm('保存していない編集があります。閉じて破棄しますか？'))
+    )
+      onClose();
+  };
+  useEffect(() => {
+    descriptionRef.current?.focus();
+  }, [value.id]);
+  useEffect(() => {
+    const guard = (e: BeforeUnloadEvent) => {
+      if (dirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', guard);
+    return () => window.removeEventListener('beforeunload', guard);
+  }, [dirty]);
   const [newAccount, setNewAccount] = useState({ code: '', name: '', type: 'expense' });
-  const readonly = locked || value.status !== 'draft';
+  const readonly = locked || value.status === 'locked';
   const debit = total(value.lines, 'debit_amount'),
     credit = total(value.lines, 'credit_amount');
   const changeLine = (i: number, patch: Partial<JournalLine>) =>
     setValue((v) => ({ ...v, lines: v.lines.map((l, j) => (i === j ? { ...l, ...patch } : l)) }));
-  const save = async (status: 'draft' | 'confirmed') => {
+  const save = async (status: 'draft' | 'confirmed', after: 'close' | 'new' | 'next' = 'close') => {
+    if (
+      saving.current ||
+      readonly ||
+      busy ||
+      !value.description.trim() ||
+      (editingConfirmed && !reason.trim()) ||
+      (status === 'confirmed' && (debit !== credit || !debit))
+    )
+      return;
+    saving.current = true;
     const ok = await run(
-      () => engine.write((st) => st.saveTransaction({ ...value, status })),
+      () =>
+        engine.write((st) =>
+          editingConfirmed
+            ? st.reviseTransaction({ ...value, status }, reason)
+            : st.saveTransaction({ ...value, status }),
+        ),
       status === 'confirmed' ? '仕訳を確定しました' : '下書きを保存しました',
     );
-    if (ok) onClose();
+    saving.current = false;
+    if (!ok) return;
+    if (after === 'close') {
+      onClose();
+      return;
+    }
+    const next =
+      after === 'next'
+        ? engine.snapshot.transactions.find(
+            (t) => t.year === targetYear && t.status === 'draft' && t.id !== value.id,
+          )
+        : undefined;
+    if (after === 'next' && !next) {
+      onClose();
+      return;
+    }
+    const fresh: Transaction = next || {
+      ...value,
+      id: newId(),
+      description: '',
+      status: 'draft',
+      source: 'manual',
+      updated_at: undefined,
+      evidence_ids: [],
+      lines: value.lines.map((l) => ({ ...l, debit_amount: 0, credit_amount: 0, memo: '' })),
+    };
+    setValue(fresh);
+    setBaseline(JSON.stringify(fresh));
+    setReason('');
+    setAccountQuery('');
   };
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.isComposing || (!e.ctrlKey && !e.metaKey) || readonly) return;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        void save('confirmed', e.shiftKey ? 'new' : 'close');
+      }
+      if (e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void save('draft');
+      }
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  });
   return (
-    <Modal title={initial ? '仕訳の詳細' : '取引を記帳'} wide onClose={onClose}>
+    <Modal title={initial ? '仕訳を編集' : '取引を記帳'} wide onClose={close}>
       <div className="modal-body">
         <div className="journal-state">
           <Badge value={value.status} />
@@ -192,6 +298,27 @@ export function JournalEditor({
             {targetYear}年 · {value.source === 'ai' ? 'AI読取から作成した候補です' : '複式簿記'}
           </span>
         </div>
+        {editingConfirmed && !locked && (
+          <div className="edit-reason">
+            <p className="small muted">
+              確定済みの内容は、保存するまで変わりません。修正理由と変更前の内容を履歴に残します。
+            </p>
+            <Field label="修正理由">
+              <input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="例：領収書を確認して金額を訂正"
+              />
+            </Field>
+            <div className="actions">
+              {['入力内容の訂正', '勘定科目の見直し', '証憑確認による訂正'].map((r) => (
+                <button key={r} className="text-button" onClick={() => setReason(r)}>
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="form-grid">
           <Field label="取引日">
             <input
@@ -213,6 +340,7 @@ export function JournalEditor({
           </Field>
           <Field label="摘要（取引内容）" className="span-2">
             <input
+              ref={descriptionRef}
               value={value.description}
               maxLength={2000}
               disabled={readonly}
@@ -221,6 +349,40 @@ export function JournalEditor({
             />
           </Field>
         </div>
+        {!readonly && (
+          <div className="journal-quick-tools">
+            {value.lines.length === 2 && (
+              <Field label="かんたん金額（借方・貸方へ同額入力）">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min="0"
+                  step="1"
+                  value={debit || ''}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onChange={(e) => {
+                    const amount = Number(e.target.value);
+                    setValue({
+                      ...value,
+                      lines: [
+                        { ...value.lines[0], debit_amount: amount, credit_amount: 0 },
+                        { ...value.lines[1], debit_amount: 0, credit_amount: amount },
+                      ],
+                    });
+                  }}
+                />
+              </Field>
+            )}
+            <Field label="勘定科目を絞り込む">
+              <input
+                type="search"
+                value={accountQuery}
+                onChange={(e) => setAccountQuery(e.target.value)}
+                placeholder="科目名またはコード"
+              />
+            </Field>
+          </div>
+        )}
         {!readonly && (
           <div className="quick-presets">
             <span>かんたん入力</span>
@@ -311,15 +473,21 @@ export function JournalEditor({
                   value={l.account_id}
                   onChange={(e) => changeLine(i, { account_id: e.target.value })}
                 >
-                  {s.accounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
+                  {s.accounts
+                    .filter(
+                      (a) => a.id === l.account_id || `${a.code} ${a.name}`.includes(accountQuery),
+                    )
+                    .map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
                 </select>
                 <input
                   aria-label={`${i + 1}行目の借方`}
                   type="number"
+                  inputMode="numeric"
+                  onFocus={(e) => e.currentTarget.select()}
                   min="0"
                   step="1"
                   value={l.debit_amount || ''}
@@ -330,6 +498,8 @@ export function JournalEditor({
                 <input
                   aria-label={`${i + 1}行目の貸方`}
                   type="number"
+                  inputMode="numeric"
+                  onFocus={(e) => e.currentTarget.select()}
                   min="0"
                   step="1"
                   value={l.credit_amount || ''}
@@ -500,36 +670,11 @@ export function JournalEditor({
             この年度は閲覧専用です。
           </p>
         )}
-        {!locked && value.status !== 'draft' && (
-          <div className="notice-block">
-            <p>確定済みの仕訳です。変更前の内容と修正理由を履歴に残します。</p>
-            <Field label="修正理由">
-              <input
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="例：領収書を確認して金額を訂正"
-              />
-            </Field>
-            <button
-              className="button secondary"
-              disabled={busy || !reason.trim()}
-              onClick={() =>
-                void run(async () => {
-                  await engine.write((st) => st.unlockTransaction(value.id, reason));
-                  const fresh = engine.snapshot.transactions.find((t) => t.id === value.id)!;
-                  setValue(fresh);
-                }, '下書きに戻しました')
-              }
-            >
-              修正のため下書きに戻す
-            </button>
-          </div>
-        )}
       </div>
       <div className="modal-footer">
         {!readonly ? (
           <>
-            {initial && (
+            {value.status === 'draft' && s.transactions.some((t) => t.id === value.id) && (
               <button
                 className="text-button delete-draft"
                 disabled={busy}
@@ -546,17 +691,60 @@ export function JournalEditor({
                 下書きを削除
               </button>
             )}
-            <button className="button secondary" disabled={busy} onClick={() => void save('draft')}>
+            <button
+              className="button secondary"
+              disabled={busy || (editingConfirmed && !reason.trim())}
+              onClick={() => void save('draft')}
+            >
               下書き保存
             </button>
             <button
               className="button"
-              disabled={busy || !value.description.trim() || debit !== credit || debit === 0}
+              disabled={
+                busy ||
+                !value.description.trim() ||
+                debit !== credit ||
+                debit === 0 ||
+                (editingConfirmed && !reason.trim())
+              }
               onClick={() => void save('confirmed')}
             >
               <Check size={17} />
               内容を確認して確定
             </button>
+            <button
+              className="button secondary"
+              disabled={
+                busy ||
+                !value.description.trim() ||
+                debit !== credit ||
+                !debit ||
+                (editingConfirmed && !reason.trim())
+              }
+              onClick={() => void save('confirmed', 'new')}
+            >
+              確定して続けて入力
+            </button>
+            {s.transactions.some(
+              (t) => t.year === targetYear && t.status === 'draft' && t.id !== value.id,
+            ) && (
+              <button
+                className="button secondary"
+                disabled={
+                  busy ||
+                  !value.description.trim() ||
+                  debit !== credit ||
+                  !debit ||
+                  (editingConfirmed && !reason.trim())
+                }
+                onClick={() => void save('confirmed', 'next')}
+              >
+                確定して次の下書き
+              </button>
+            )}
+            <small className="shortcut-hint">
+              Ctrl / ⌘ + Enter：確定　Shiftも押す：続けて入力　Ctrl / ⌘ + S：下書き
+            </small>
           </>
         ) : (
           <button className="button secondary" onClick={onClose}>

@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Save, Cloud, HardDrive, Download, Plus, ExternalLink, ShieldCheck } from 'lucide-react';
 import { z } from 'zod';
 import { useApp } from './context';
 import { PageHeading, Card, Field, FileButton, Modal, Badge } from './shared';
 import { type Profile, historicalSchema } from '../domain/model';
-import { bookLabel } from '../lib/book';
+import { bookLabel, bookKind } from '../lib/book';
 import { download, listBackups, demoMode, getBlob } from '../lib/persistence';
 import { zipFiles } from '../lib/packs';
+import SyncSettings, { CloudBackups } from './SyncSettings';
 export default function Settings() {
   const { s, engine, drive, year, run, busy, setConnected } = useApp();
   const [profile, setProfile] = useState<Profile>(s.profile),
@@ -21,6 +22,18 @@ export default function Settings() {
     [storage, setStorage] = useState(''),
     [account, setAccount] = useState({ code: '', name: '', type: 'expense' });
   const [backups, setBackups] = useState<Awaited<ReturnType<typeof listBackups>>>([]);
+  const [profileDirty, setProfileDirty] = useState(false);
+  const profileBase = useRef(s.profile);
+  const [rootDirty, setRootDirty] = useState(false);
+  useEffect(() => {
+    if (!profileDirty) {
+      setProfile(s.profile);
+      profileBase.current = s.profile;
+    }
+  }, [s.profile, profileDirty]);
+  useEffect(() => {
+    if (!rootDirty) setRoot(s.settings.drive_root || '');
+  }, [s.settings.drive_root, rootDirty]);
   useEffect(() => {
     void listBackups().then(setBackups);
     void engine
@@ -111,10 +124,22 @@ export default function Settings() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            void run(
-              () => engine.write((st) => st.saveProfile(profile)),
-              '事業プロフィールを保存しました',
-            );
+            void run(async () => {
+              await engine.write((st) => {
+                const latest = st.snapshot().profile,
+                  next = { ...latest };
+                for (const key of Object.keys(profile) as (keyof Profile)[]) {
+                  if (profile[key] === profileBase.current[key]) continue;
+                  if (latest[key] !== profileBase.current[key] && latest[key] !== profile[key])
+                    throw new Error(
+                      '編集中の項目が別の端末で変更されました。最新の事業プロフィールを確認してください',
+                    );
+                  next[key] = profile[key];
+                }
+                st.saveProfile(next);
+              });
+              setProfileDirty(false);
+            }, '事業プロフィールを保存しました');
           }}
         >
           <div className="form-grid">
@@ -129,13 +154,19 @@ export default function Settings() {
                     rows={3}
                     value={profile[f.key]}
                     placeholder={f.placeholder}
-                    onChange={(e) => setProfile({ ...profile, [f.key]: e.target.value })}
+                    onChange={(e) => {
+                      setProfileDirty(true);
+                      setProfile({ ...profile, [f.key]: e.target.value });
+                    }}
                   />
                 ) : (
                   <input
                     value={profile[f.key]}
                     placeholder={f.placeholder}
-                    onChange={(e) => setProfile({ ...profile, [f.key]: e.target.value })}
+                    onChange={(e) => {
+                      setProfileDirty(true);
+                      setProfile({ ...profile, [f.key]: e.target.value });
+                    }}
                   />
                 )}
               </Field>
@@ -162,13 +193,16 @@ export default function Settings() {
           <Field label="保存先ルートフォルダID（空欄なら新規作成）">
             <input
               value={root}
-              onChange={(e) => setRoot(e.target.value)}
+              onChange={(e) => {
+                setRootDirty(true);
+                setRoot(e.target.value);
+              }}
               placeholder="DriveのフォルダURL末尾のID"
             />
           </Field>
         </div>
         <p className="small muted">
-          外部原本を検出するためDrive全体の読み取り権限と、アプリ作成ファイルの書き込み権限を使用します。Client
+          外部原本を検出するためDrive全体の読み取り権限と、アプリ作成ファイル・アプリ専用領域の書き込み権限を使用します。Client
           Secretは使用しません。アクセストークンはメモリ内だけに保持します。
         </p>
         <div className="actions">
@@ -182,6 +216,7 @@ export default function Settings() {
                   st.setSetting('drive_root', root.trim());
                 });
                 await drive.connect(client.trim());
+                setRootDirty(false);
                 setConnected(true);
               }, 'Google Driveに接続しました')
             }
@@ -232,23 +267,60 @@ export default function Settings() {
           </a>
         </details>
       </Card>
-      <Card title={`${bookLabel}のバックアップと復元`} subtitle={storage}>
+      <SyncSettings />
+      {!demoMode && <CloudBackups onRestore={setRestore} />}
+      {!demoMode && (
+        <Card title="Driveから環境を復旧">
+          <p>
+            新しい端末への移行や、端末データが開けない場合に使います。Googleに接続し、復旧内容を確認してから帳簿を戻せます。
+          </p>
+          <a
+            className="button secondary"
+            href={`${import.meta.env.BASE_URL}?recover=1&book=${bookKind}`}
+          >
+            Driveから環境を復旧
+          </a>
+        </Card>
+      )}
+      {import.meta.env.VITE_PRIVATE_HOST === '1' && (
+        <Card title="アプリのログイン">
+          <p>
+            この配信先はサーバーでパスワードを確認します。ログアウトしても端末の帳簿は削除しません。
+          </p>
+          <form method="post" action="/_auth/logout">
+            <button className="button secondary" type="submit">
+              アプリからログアウト
+            </button>
+          </form>
+        </Card>
+      )}
+      <Card title={`${bookLabel}の保存と復元`} subtitle={storage}>
         <p>
-          この所得区分のSQLiteには全年度・事業情報・相談履歴を含みます。他の所得区分は別のSQLiteに保存しています。未アップロードの原本はSQLiteとは別に保存されています。
+          帳簿と正式なバックアップはGoogle
+          Driveに保存します。この端末には操作用の作業データを持ちます。SQLiteには全年度・事業情報・相談履歴を含み、原本は別ファイルです。
         </p>
         <div className="actions">
           <button
             className="button secondary"
             disabled={busy}
             onClick={() =>
-              void run(async () => {
-                const backup = await engine.backup();
-                download(`aoiro_${backup.id}.sqlite`, backup.bytes);
-              }, 'バックアップを書き出しました')
+              void run(
+                async () => {
+                  if (!demoMode && !drive.connected)
+                    throw new Error(
+                      '先にGoogle Driveへ接続してください。正式なバックアップはDriveへ保存します',
+                    );
+                  const backup = await engine.backup();
+                  download(`aoiro_${backup.id}.sqlite`, backup.bytes);
+                },
+                demoMode
+                  ? 'デモのバックアップを書き出しました'
+                  : 'Driveへバックアップし、手元にもコピーしました',
+              )
             }
           >
             <Download size={16} />
-            SQLiteを保存
+            {demoMode ? 'SQLiteを保存' : 'Driveにバックアップしてコピーを保存'}
           </button>
           <button
             className="button secondary"
@@ -286,9 +358,9 @@ export default function Settings() {
           </button>
         </div>
         <details className="details">
-          <summary>自動バックアップの履歴（{backups.length}件）</summary>
+          <summary>Driveへ送信待ちの一時退避（{backups.length}件）</summary>
           <p className="small muted">
-            この端末のブラウザ内に保存しています。必要なバックアップを外部へ書き出せます。
+            オフライン時の退避です。Drive保存はまだ完了していません。再接続・同期するとDriveへ移し、端末の一時退避から除きます。
           </p>
           {backups.slice(0, 20).map((b) => (
             <div className="backup-row" key={b.id}>

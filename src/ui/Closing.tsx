@@ -4,7 +4,8 @@ import { useApp } from './context';
 import { PageHeading, Card, Badge, Field, Modal } from './shared';
 import { closingChecks } from '../domain/accounting';
 import { yearArchive } from '../lib/packs';
-import { download } from '../lib/persistence';
+import { download, demoMode } from '../lib/persistence';
+import { OwnerSettlement } from './ReceiptReview';
 export default function Closing() {
   const { s, year, engine, drive, run, busy, navigate } = useApp();
   const fiscal = s.years.find((y) => y.year === year)!;
@@ -13,8 +14,8 @@ export default function Closing() {
     warn = checks.filter((c) => !c.fatal).reduce((n, c) => n + c.count, 0);
   const [confirm, setConfirm] = useState(false),
     [word, setWord] = useState(''),
-    [reason, setReason] = useState(''),
-    [cloud, setCloud] = useState(drive.connected);
+    [reason, setReason] = useState('');
+  const cloud = !demoMode;
   const archive = async (close: boolean) => {
     let folder = '';
     if (cloud) {
@@ -95,15 +96,13 @@ export default function Closing() {
           </button>
         </div>
       </Card>
+      <OwnerSettlement />
       <Card title="帳簿とバックアップの保存">
         <p>
           仕訳帳・試算表CSV、P/L・B/S
           JSON、固定資産・償却、証憑索引、相談履歴、全年度のSQLite、SHA-256チェックサムをZIPにまとめます。PDFは帳簿画面の印刷から保存できます。
         </p>
-        <label className="inline-check">
-          <input type="checkbox" checked={cloud} onChange={(e) => setCloud(e.target.checked)} />
-          Google Driveの年度バックアップフォルダにも保存する
-        </label>
+        <p>Google Driveの年度バックアップフォルダに保存し、手元にもコピーを書き出します。</p>
         <div className="actions spaced">
           <button
             className="button secondary"
@@ -125,7 +124,8 @@ export default function Closing() {
           )}
         </div>
         <p className="small muted">
-          オフラインでは端末内バックアップとZIP出力で締められます。後で同じパッケージをDriveへ保存してください。原本そのものは既存の保存場所に残ります。
+          年度締めにはGoogle
+          Driveへの接続と保存完了が必要です。原本そのものはDriveの保存場所に残ります。デモのみ端末への書き出しで動作を試せます。
         </p>
       </Card>
       {fiscal.status === 'closed' && (
