@@ -34,13 +34,11 @@ test('スマホで資料台帳を検索し確認事項へ回答できる', async
       },
     ],
   };
-  await page
-    .locator('input[type=file]')
-    .setInputFiles({
-      name: 'example.json',
-      mimeType: 'application/json',
-      buffer: Buffer.from(JSON.stringify(archive)),
-    });
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'example.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(archive)),
+  });
   await page.getByRole('button', { name: 'この台帳を登録', exact: true }).click();
   await page.getByLabel('資料名・元の場所・読み取り文字で検索').fill('文房具');
   await expect(page.locator('.archive-document').first()).toContainText('架空の領収書.pdf');
@@ -95,7 +93,7 @@ test('借貸不一致は確定できず、下書きは利益に混ぜない', as
   await page.getByRole('button', { name: '下書き保存', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('.metric').nth(1).locator('.metric-value')).toHaveText('￥0');
-  await page.getByRole('button', { name: '年度締め', exact: true }).click();
+  await page.getByRole('button', { name: '年度締め・繰越', exact: true }).click();
   await expect(
     page.getByRole('button', { name: '保存して年度を締める', exact: true }),
   ).toBeDisabled();
@@ -466,7 +464,7 @@ test('事業主勘定を残高表示から相殺し、実際の現金精算を�
     await page.getByRole('button', { name: '内容を確認して確定', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
   }
-  await page.getByRole('button', { name: '年度締め', exact: true }).click();
+  await page.getByRole('button', { name: '年度締め・繰越', exact: true }).click();
   await expect(
     page.getByRole('button', { name: '現金精算の仕訳を確定', exact: true }),
   ).toBeDisabled();
