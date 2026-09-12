@@ -1,4 +1,5 @@
 import type { Account, Transaction, Snapshot, BankEntry, JournalLine } from './model';
+import { depreciationMismatches } from './depreciation';
 export const total = (lines: JournalLine[], side: 'debit_amount' | 'credit_amount') =>
   lines.reduce((s, l) => s + l[side], 0);
 export function validateJournal(
@@ -119,6 +120,11 @@ export function closingChecks(s: Snapshot, year: number) {
   const tx = s.transactions.filter((t) => t.year === year);
   const ev = s.evidences.filter((e) => e.year === year);
   const checks: { label: string; count: number; fatal: boolean }[] = [];
+  checks.push({
+    label: '償却明細と仕訳の不一致',
+    count: depreciationMismatches(s, year).length,
+    fatal: true,
+  });
   checks.push({
     label: '借方・貸方の不一致',
     count: tx.filter(

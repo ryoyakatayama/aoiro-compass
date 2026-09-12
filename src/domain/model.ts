@@ -93,12 +93,30 @@ export const assetSchema = z
     acquisition_cost: moneySchema.positive(),
     asset_class: z.string().min(1).max(100),
     useful_life_years: z.number().int().min(1).max(100),
-    depreciation_method: z.literal('manual'),
-    business_use_ratio: z.number().min(0).max(100),
+    depreciation_method: z.enum(['manual', 'straight_line']),
+    business_use_ratio: z.number().min(0).max(100).multipleOf(0.01),
+    asset_account_id: z.string().max(100).optional(),
+    opening_year: yearSchema.optional(),
+    opening_book_value: moneySchema.optional(),
+    opening_basis: z.string().max(3000).optional(),
     disposed_at: dateSchema.nullable().default(null),
     note: z.string().max(3000).default(''),
   })
-  .refine((a) => a.in_service_date >= a.acquisition_date, '供用日は取得日以降にしてください');
+  .refine((a) => a.in_service_date >= a.acquisition_date, '供用日は取得日以降にしてください')
+  .refine(
+    (a) => !a.disposed_at || a.disposed_at >= a.in_service_date,
+    '処分日は供用日以降にしてください',
+  )
+  .refine(
+    (a) =>
+      a.opening_year === undefined ||
+      (a.opening_year === a.year &&
+        a.opening_book_value !== undefined &&
+        a.opening_book_value <= a.acquisition_cost &&
+        !!a.opening_basis?.trim() &&
+        a.in_service_date < `${a.opening_year}-01-01`),
+    '引継ぎは前年までの供用日・確認済み簿価・根拠を入力してください',
+  );
 export type Asset = z.infer<typeof assetSchema>;
 export interface Depreciation {
   id: string;
