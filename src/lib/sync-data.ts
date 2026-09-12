@@ -7,6 +7,7 @@ import {
 import type { Store } from '../db/store';
 import { profileSchema } from '../domain/model';
 import type { Entity, SyncData } from './sync-graph';
+import { archiveSyncValueSchema } from './sync-graph';
 import type { SqlValue } from 'sql.js';
 
 const tables = [
@@ -26,6 +27,10 @@ const tables = [
   'audit_events',
 ] as const;
 type Row = Record<string, SqlValue>;
+const archiveValue = (value: Entity) =>
+  typeof value === 'string'
+    ? value // Read earlier small archive revisions as well.
+    : archiveSyncValueSchema.parse(value).value;
 const pk = (table: string) =>
   table === 'fiscal_years' || table === 'historical_summaries' ? 'year' : 'id';
 export function exportSyncData(store: Store): SyncData {
@@ -57,7 +62,10 @@ export function exportSyncData(store: Store): SyncData {
     archiveSetting,
     archiveResponsePrefix + '%',
   ]))
-    data['shared:' + String(row.key)] = String(row.value);
+    data['shared:' + String(row.key)] = {
+      kind: 'source_archive_setting',
+      value: String(row.value),
+    };
   return data;
 }
 export function importSyncData(store: Store, data: SyncData) {
@@ -108,9 +116,8 @@ export function importSyncData(store: Store, data: SyncData) {
       continue;
     }
     if (key === 'shared:' + archiveSetting || key.startsWith('shared:' + archiveResponsePrefix)) {
-      if (typeof value !== 'string') throw new Error('資料台帳の同期データが不正です');
       (key === 'shared:' + archiveSetting ? archiveSchema : archiveResponseSchema).parse(
-        JSON.parse(value),
+        JSON.parse(archiveValue(value)),
       );
       continue;
     }
@@ -142,7 +149,7 @@ export function importSyncData(store: Store, data: SyncData) {
   ]);
   for (const [key, value] of Object.entries(data))
     if (key === 'shared:' + archiveSetting || key.startsWith('shared:' + archiveResponsePrefix))
-      store.setSetting(key.slice(7), String(value));
+      store.setSetting(key.slice(7), archiveValue(value));
   const previousRoot = store.setting('drive_root') || '';
   const nextRoot = String(data['shared:drive_root'] || '');
   store.setSetting('drive_root', nextRoot);

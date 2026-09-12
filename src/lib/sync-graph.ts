@@ -2,9 +2,17 @@ import { z } from 'zod';
 
 const scalar = z.union([z.string().max(8_000_000), z.number().finite(), z.null()]);
 const row = z.record(z.string(), scalar);
+// Archive JSON can exceed the short profile-string limit. Keep it explicitly tagged.
+export const archiveSyncValueSchema = z
+  .object({
+    kind: z.literal('source_archive_setting'),
+    value: z.string().max(20_000_000),
+  })
+  .strict();
 export const entitySchema = z.union([
   row,
   z.object({ row, lines: z.array(row).max(100), links: z.array(row).max(100) }).strict(),
+  archiveSyncValueSchema,
   z.string().max(10000),
 ]);
 export type Entity = z.infer<typeof entitySchema>;
