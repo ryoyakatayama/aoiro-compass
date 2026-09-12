@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import fs from 'node:fs/promises';
 import JSZip from 'jszip';
+import { fakeDrive, connectDrive, clientId } from './drive-fixture';
 async function ready(page: Page, url = '/') {
   await page.goto(url);
   await expect(page.getByRole('heading', { level: 1 })).not.toHaveText('青色コンパス');
@@ -64,7 +65,9 @@ test('事業情報と本人の回答を対話パックに含め、追加回答�
   await page.getByRole('button', { name: /自宅の仕事場：按分の根拠を整理しましょう/ }).click();
   await page.getByLabel('AIへの回答・追加質問').fill('仕事専用の部屋で、面積は20%です。');
   await page.getByRole('button', { name: '回答を保存', exact: true }).click();
-  await expect(page.getByText('仕事専用の部屋で、面積は20%です。', { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('paragraph').filter({ hasText: /^仕事専用の部屋で、面積は20%です。$/ }),
+  ).toBeVisible();
   await page.getByRole('button', { name: '対話パックを確認', exact: true }).click();
   const dl = page.waitForEvent('download');
   await page.getByRole('button', { name: '確認してZIPを保存', exact: true }).click();
@@ -136,14 +139,25 @@ test('スマホ幅で取込先を選択でき、各画面が横にはみ出さ�
   await page.goto('/?demo=1&book=misc#dashboard');
   await page.screenshot({ path: 'test-results/mobile-dashboard.png', fullPage: true });
 });
-test('SQLiteのバックアップを復元できる', async ({ page }) => {
+test('DriveにSQLiteをバックアップし、コピーから復元できる', async ({ page, context }) => {
+  const cloud = fakeDrive();
+  await cloud.attach(context);
   await ready(page);
+  await connectDrive(page);
+  await page.getByRole('button', { name: 'ダッシュボード', exact: true }).click();
   await journal(page, 'バックアップ時点の経費', 2500);
   await page.getByRole('button', { name: '事業情報・設定', exact: true }).click();
   const promise = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'SQLiteを保存', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Driveにバックアップしてコピーを保存', exact: true })
+    .click();
   const download = await promise;
   const bytes = await fs.readFile((await download.path())!);
+  expect(
+    [...cloud.files.values()].some(
+      (f) => f.appProperties?.aoiroBackup === '1' && f.bytes.equals(bytes),
+    ),
+  ).toBe(true);
   await page.getByRole('button', { name: 'ダッシュボード', exact: true }).click();
   await journal(page, 'バックアップ後の経費', 8888);
   await page.getByRole('button', { name: '事業情報・設定', exact: true }).click();
@@ -188,4 +202,232 @@ test('スマホで仕訳入力中に勘定科目を登録できる', async ({ pa
     page.getByRole('button', { name: 'スマホから研修費を登録', exact: true }),
   ).toBeVisible();
   await expect(page.getByText('研修費', { exact: true }).first()).toBeVisible();
+});
+
+test('確定済みを直接編集でき、連続入力とキーボード保存が使える', async ({ page }) => {
+  await ready(page);
+  await journal(page, '編集する仕訳', 1234);
+  await page.getByRole('button', { name: '編集する仕訳', exact: true }).click();
+  await expect(page.getByLabel('摘要（取引内容）')).toBeEditable();
+  await page.getByLabel('摘要（取引内容）').fill('訂正した仕訳');
+  await page.getByLabel('かんたん金額（借方・貸方へ同額入力）').fill('2500');
+  await expect(
+    page.getByRole('button', { name: '内容を確認して確定', exact: true }),
+  ).toBeDisabled();
+  await page.getByRole('button', { name: '入力内容の訂正', exact: true }).click();
+  await page.getByRole('button', { name: '確定して続けて入力', exact: true }).click();
+  await expect(page.getByLabel('摘要（取引内容）')).toHaveValue('');
+  await page.getByLabel('摘要（取引内容）').fill('続けて入力した仕訳');
+  await page.getByLabel('かんたん金額（借方・貸方へ同額入力）').fill('3000');
+  await page.getByLabel('摘要（取引内容）').press('Control+Enter');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '訂正した仕訳', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '続けて入力した仕訳', exact: true })).toBeVisible();
+});
+
+test('未保存の編集を閉じると確認し、破棄しても確定済みの内容は変わらない', async ({ page }) => {
+  await ready(page);
+  await journal(page, '元の内容', 500);
+  await page.getByRole('button', { name: '元の内容', exact: true }).click();
+  await page.getByLabel('摘要（取引内容）').fill('保存しない内容');
+  page.once('dialog', (d) => d.dismiss());
+  await page.getByRole('button', { name: '閉じる', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(1);
+  page.once('dialog', (d) => d.accept());
+  await page.getByRole('button', { name: '閉じる', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '元の内容', exact: true })).toBeVisible();
+});
+
+test('新端末と破損した端末をDriveから復旧し、事業情報も戻せる', async ({
+  page,
+  context,
+  browser,
+}) => {
+  const cloud = fakeDrive();
+  await cloud.attach(context);
+  await ready(page);
+  await journal(page, 'Driveで復旧する経費', 4321);
+  await connectDrive(page);
+  await page.getByLabel('業種', { exact: true }).fill('デザイン制作');
+  await page.getByRole('button', { name: '事業プロフィールを保存', exact: true }).click();
+  await expect(page.getByText('事業プロフィールを保存しました', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '帳簿を今すぐ同期', exact: true }).click();
+  await expect(
+    page.getByText('Google Driveに帳簿とバックアップを保存済みです', { exact: true }),
+  ).toBeVisible();
+  const origin = new URL(page.url()).origin;
+  const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await cloud.attach(phoneContext);
+  const phone = await phoneContext.newPage();
+  const recover = async (target: Page) => {
+    await target.goto(origin + '/?recover=1');
+    await expect(
+      target.getByRole('heading', { name: 'Driveから環境を復旧', exact: true }),
+    ).toBeVisible();
+    await target.getByLabel('Google OAuth Client ID', { exact: true }).fill(clientId);
+    await target
+      .getByRole('button', { name: 'Googleに接続して復旧内容を確認', exact: true })
+      .click();
+    await expect(target.getByText(/仕訳 1 件/)).toBeVisible();
+    await target.getByLabel('確認のため「復旧」と入力').fill('復旧');
+    await target.getByRole('button', { name: 'この内容で復旧する', exact: true }).click();
+    await expect(target.getByLabel('業種', { exact: true })).toHaveValue('デザイン制作');
+    if ((target.viewportSize()?.width || 1440) < 800)
+      await target.getByRole('button', { name: 'メニューを開く', exact: true }).click();
+    await target.getByRole('button', { name: 'ダッシュボード', exact: true }).click();
+    await expect(
+      target.getByRole('button', { name: 'Driveで復旧する経費', exact: true }),
+    ).toBeVisible();
+  };
+  await recover(phone);
+  await phone.screenshot({
+    path: '../../work/recovered-mobile.png',
+    fullPage: true,
+    animations: 'disabled',
+  });
+  await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    const file = await root.getFileHandle('aoiro-compass.sqlite');
+    const stream = await file.createWritable();
+    await stream.write('corrupted-test-cache');
+    await stream.close();
+  });
+  await page.reload();
+  await expect(page.getByRole('heading', { name: '帳簿を開けませんでした' })).toBeVisible();
+  await recover(page);
+  expect(
+    [...cloud.files.values()].some((f) => f.appProperties?.reason === '復旧前の端末データ'),
+  ).toBe(true);
+  await phoneContext.close();
+});
+
+test('Driveバックアップが失敗した場合は保存済みと表示せず、再試行できる', async ({
+  page,
+  context,
+}) => {
+  const cloud = fakeDrive();
+  await cloud.attach(context);
+  cloud.state.failBackups = true;
+  await ready(page);
+  await page.getByRole('button', { name: '事業情報・設定', exact: true }).click();
+  await page.getByLabel('Google OAuth Client ID', { exact: true }).fill(clientId);
+  await page.getByRole('button', { name: '設定を保存して接続', exact: true }).click();
+  await expect(page.getByText(/Drive 503/)).toBeVisible();
+  await expect(
+    page.getByText('Google Driveに帳簿とバックアップを保存済みです', { exact: true }),
+  ).toHaveCount(0);
+  cloud.state.failBackups = false;
+  await page.getByRole('button', { name: '帳簿を今すぐ同期', exact: true }).click();
+  await expect(
+    page.getByText('Google Driveに帳簿とバックアップを保存済みです', { exact: true }),
+  ).toBeVisible();
+});
+
+test('画像の読取結果を科目未選択から連続確定し、貸方を事業主借に固定する', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await ready(page, '/?book=misc#evidence');
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aMfsAAAAASUVORK5CYII=',
+    'base64',
+  );
+  await page.locator('input[type=file][multiple]').setInputFiles(
+    [1, 2, 3].map((i) => ({
+      name: `serial-${i}.png`,
+      mimeType: 'image/png',
+      buffer: Buffer.concat([png, Buffer.from([i])]),
+    })),
+  );
+  await expect(page.locator('.evidence-card')).toHaveCount(3);
+  for (let i = 1; i <= 3; i++)
+    await page.getByLabel(`serial-${i}.pngを選択`, { exact: true }).check();
+  await page.getByRole('button', { name: 'AI読取パック', exact: true }).click();
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: '選択した原本を書き出す', exact: true }).click();
+  const zip = await JSZip.loadAsync(await fs.readFile((await (await downloadPromise).path())!));
+  const manifest = JSON.parse(await zip.file('manifest.json')!.async('string'));
+  const jsonl = manifest.evidence_ids
+    .map((id: string, i: number) =>
+      JSON.stringify({
+        schema_version: '1.0',
+        evidence_id: id,
+        transaction_date: `2026-09-0${i + 1}`,
+        vendor: `連続読取${i + 1}`,
+        gross_amount: 1000 * (i + 1),
+        currency: 'JPY',
+        suggested_account: '未分類',
+        confidence: 0.8,
+      }),
+    )
+    .join('\n');
+  await page
+    .locator('input[type=file][accept=".jsonl,.json,.txt"]')
+    .setInputFiles({ name: 'read.jsonl', mimeType: 'text/plain', buffer: Buffer.from(jsonl) });
+  await page.getByRole('button', { name: '領収書を連続仕訳（3件）', exact: true }).click();
+  await expect(page.getByRole('button', { name: '確定して次へ', exact: true })).toBeDisabled();
+  await expect(page.getByLabel('この連続処理の支払側（貸方）')).toHaveValue('3100');
+  await page.getByRole('button', { name: '通信費', exact: true }).click();
+  if (
+    await page.getByText('この形式は表示できません。原本を別のアプリで確認してください').isVisible()
+  )
+    await page.getByLabel('原本を別途確認しました').check();
+  await page.getByRole('button', { name: '確定して次へ', exact: true }).click();
+  await expect(page.getByLabel('確認する摘要')).toHaveValue('連続読取2');
+  await page.getByRole('button', { name: '保留して次へ', exact: true }).click();
+  await expect(page.getByLabel('確認する摘要')).toHaveValue('連続読取3');
+  await page.getByRole('button', { name: '新聞図書費', exact: true }).click();
+  if (
+    await page.getByText('この形式は表示できません。原本を別のアプリで確認してください').isVisible()
+  )
+    await page.getByLabel('原本を別途確認しました').check();
+  await page.getByLabel('確認する摘要').press('Control+Enter');
+  await expect(page.getByText('2件を確定しました', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '一覧に戻る', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: '領収書を連続仕訳（1件）', exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'メニューを開く', exact: true }).click();
+  await page.getByRole('button', { name: '仕訳・記帳', exact: true }).click();
+  await expect(page.getByRole('row').filter({ hasText: '連続読取1' })).toContainText(
+    '通信費 / 事業主借',
+  );
+  await expect(page.getByRole('row').filter({ hasText: '連続読取3' })).toContainText(
+    '新聞図書費 / 事業主借',
+  );
+});
+
+test('事業主勘定を残高表示から相殺し、実際の現金精算をワンクリックで確定する', async ({ page }) => {
+  await ready(page);
+  for (const [description, dr, cr, amount] of [
+    ['開始時の現金', '1000', '3000', 1000],
+    ['私用の支出', '1600', '1000', 300],
+    ['私費で支払った経費', '5200', '3100', 600],
+  ] as const) {
+    await page.getByRole('button', { name: '取引を記帳', exact: true }).click();
+    await page.getByLabel('摘要（取引内容）').fill(description);
+    await page.getByLabel('1行目の勘定科目', { exact: true }).selectOption(dr);
+    await page.getByLabel('2行目の勘定科目', { exact: true }).selectOption(cr);
+    await page.getByLabel('かんたん金額（借方・貸方へ同額入力）').fill(String(amount));
+    await page.getByRole('button', { name: '内容を確認して確定', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  }
+  await page.getByRole('button', { name: '年度締め', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: '現金精算の仕訳を確定', exact: true }),
+  ).toBeDisabled();
+  await page.getByRole('button', { name: 'この金額で相殺を確定', exact: true }).click();
+  await expect(page.getByText('事業主勘定の整理仕訳を確定しました', { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'この金額で相殺を確定', exact: true }),
+  ).toBeDisabled();
+  await page.getByLabel('現金を動かす処理は、この日付・金額で実際に現金を授受しました').check();
+  await page.getByRole('button', { name: '現金精算の仕訳を確定', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: '現金精算の仕訳を確定', exact: true }),
+  ).toBeDisabled();
+  await page.getByRole('button', { name: '仕訳・記帳', exact: true }).click();
+  await expect(page.getByRole('row').filter({ hasText: '事業主貸・事業主借の相殺' })).toContainText(
+    '確定',
+  );
+  await expect(page.getByRole('row').filter({ hasText: '本人への現金精算' })).toContainText('確定');
 });
