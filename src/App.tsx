@@ -283,7 +283,7 @@ export default function App({ engine }: { engine: Engine }) {
               <span>事業情報・設定</span>
             </button>
             <div className="version">
-              AOIRO COMPASS <span>v0.2</span>
+              AOIRO COMPASS <span>v0.3</span>
             </div>
           </div>
         </aside>
