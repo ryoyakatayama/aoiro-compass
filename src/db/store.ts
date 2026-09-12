@@ -30,6 +30,7 @@ import {
   reconciliationCandidates,
   report,
 } from '../domain/accounting';
+import { businessDepreciation, openingValue, straightLine } from '../domain/depreciation';
 
 type Row = Record<string, SqlValue>;
 export class Store {
@@ -406,8 +407,16 @@ export class Store {
   saveAsset(input: unknown) {
     const a = assetSchema.parse(input);
     this.assertEditable(a.year);
-    if (Number(a.acquisition_date.slice(0, 4)) !== a.year)
+    if (a.opening_year === undefined && Number(a.acquisition_date.slice(0, 4)) !== a.year)
       throw new Error('取得日と登録年度が一致しません');
+    if (
+      a.asset_account_id &&
+      !this.snapshot().accounts.some(
+        (account) =>
+          account.id === a.asset_account_id && account.type === 'asset' && account.is_active,
+      )
+    )
+      throw new Error('資産の貸方には有効な資産科目を選んでください');
     if (this.all('SELECT id FROM assets WHERE id=?', [a.id]).length)
       throw new Error('既存資産の上書きはできません');
     this.run('INSERT INTO assets VALUES(?,?,?)', [a.id, a.year, JSON.stringify(a)]);
@@ -422,13 +431,32 @@ export class Store {
         depreciation_amount: z.number().int().nonnegative(),
         rule_version: z.string().trim().min(1).max(200),
         calculation: z.string().trim().min(1).max(5000),
+        automatic: z.boolean().default(false),
+        months: z.number().int().min(1).max(12).optional(),
       })
       .parse(input);
     this.assertEditable(d.year);
     const s = this.snapshot(),
       a = s.assets.find((a) => a.id === d.asset_id);
-    if (!a || a.year > d.year || a.in_service_date > `${d.year}-12-31`)
+    if (
+      !a ||
+      a.year > d.year ||
+      a.in_service_date > `${d.year}-12-31` ||
+      (a.disposed_at && a.disposed_at < `${d.year}-01-01`)
+    )
       throw new Error('この年度に供用されていない資産です');
+    if (s.depreciations.some((p) => p.asset_id === a.id && p.year === d.year))
+      throw new Error('この年度の償却は登録済みです');
+    if (d.opening_book_value !== openingValue(a, d.year, s.depreciations))
+      throw new Error('前年度末または引継ぎの簿価と一致しません');
+    if (d.automatic) {
+      if (a.depreciation_method !== 'straight_line')
+        throw new Error('自動計算は登録した定額法の資産で利用できます');
+      const calculated = straightLine(a, d.year, d.opening_book_value, d.months);
+      d.depreciation_amount = calculated.amount;
+      d.rule_version = calculated.rule;
+      d.calculation = calculated.basis;
+    }
     if (d.depreciation_amount > d.opening_book_value)
       throw new Error('償却額が期首簿価を超えています');
     const prior = s.depreciations
@@ -436,19 +464,19 @@ export class Store {
       .sort((a, b) => b.year - a.year)[0];
     if (prior && d.opening_book_value !== prior.closing_book_value)
       throw new Error('前回の期末簿価と一致しません');
-    if (!prior && d.opening_book_value !== a.acquisition_cost)
+    if (!prior && a.opening_year !== d.year && d.opening_book_value !== a.acquisition_cost)
       throw new Error('初回の期首簿価には取得価額を指定してください');
     if (prior && prior.year !== d.year - 1)
       throw new Error('前年度の償却明細を先に登録してください');
-    if (!prior && d.year !== Number(a.in_service_date.slice(0, 4)))
+    if (!prior && a.opening_year !== d.year && d.year !== Number(a.in_service_date.slice(0, 4)))
       throw new Error('供用年度から順に償却明細を登録してください');
     let tid: string | null = null;
-    const expense = Math.floor((d.depreciation_amount * a.business_use_ratio) / 100);
+    const expense = businessDepreciation(d.depreciation_amount, a.business_use_ratio);
     const privateAmount = d.depreciation_amount - expense;
     if (d.depreciation_amount) {
       const lines = [
         {
-          account_id: a.asset_class === '車両運搬具' ? '1510' : '1500',
+          account_id: a.asset_account_id || (a.asset_class === '車両運搬具' ? '1510' : '1500'),
           debit_amount: 0,
           credit_amount: d.depreciation_amount,
         },
