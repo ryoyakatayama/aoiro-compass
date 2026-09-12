@@ -733,12 +733,12 @@ export class Store {
       if (dr !== cr) throw new Error('過年度B/Sの借方と貸方が一致しません');
       if (new Set(h.summary.monthly.map((m) => m.month)).size !== h.summary.monthly.length)
         throw new Error('月次集計の月が重複しています');
-      if (
-        h.summary.monthly.length === 12 &&
-        (h.summary.monthly.reduce((s, m) => s + m.revenue, 0) !== h.summary.revenue ||
-          h.summary.monthly.reduce((s, m) => s + m.expense, 0) !== h.summary.expense)
-      )
-        throw new Error('月次集計と年次集計が一致しません');
+      for (const metric of ['revenue', 'expense'] as const) {
+        const known = h.summary.monthly.filter((m) => m[metric] !== null);
+        const sum = known.reduce((s, m) => s + m[metric]!, 0);
+        if (known.length === 12 && sum !== h.summary[metric])
+          throw new Error('月次集計と年次集計が一致しません');
+      }
       this.run('INSERT INTO historical_summaries VALUES(?,?)', [h.year, JSON.stringify(h.summary)]);
       if (h.transactions.length) {
         const r = report(this.snapshot(), h.year);
