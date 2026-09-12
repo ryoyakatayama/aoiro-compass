@@ -74,6 +74,8 @@ test('申告補足明細もDrive経由で別端末に復元される', async ({ 
   const first = await a.newPage();
   await first.goto('/');
   await connectDrive(first);
+  await first.getByLabel('会計処理の方針', { exact: true }).fill('確認済みの方式（架空）');
+  await first.getByRole('button', { name: '事業プロフィールを保存', exact: true }).click();
   await first.goto('/#filing');
   await first.getByRole('button', { name: '補足明細を追加', exact: true }).click();
   await first.getByLabel('支払者・受取人・項目名').fill('同期テスト用の架空取引先');
@@ -84,6 +86,9 @@ test('申告補足明細もDrive経由で別端末に復元される', async ({ 
   const second = await b.newPage();
   await second.goto('/');
   await connectDrive(second);
+  await expect(second.getByLabel('会計処理の方針', { exact: true })).toHaveValue(
+    '確認済みの方式（架空）',
+  );
   await second.goto('/#filing');
   await expect(second.getByText('同期テスト用の架空取引先', { exact: true })).toBeVisible();
   await a.close();
