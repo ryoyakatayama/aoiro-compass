@@ -82,19 +82,19 @@ export function monthly(s: Snapshot, year: number) {
       const r = summary?.monthly.find((r) => r.month === i + 1);
       return {
         month: i + 1,
-        revenue: r?.revenue || 0,
-        expense: r?.expense || 0,
-        profit: r ? r.revenue - r.expense : 0,
-        available: !!r,
+        revenue: r?.revenue ?? null,
+        expense: r?.expense ?? null,
+        profit: r?.revenue != null && r?.expense != null ? r.revenue - r.expense : null,
+        available: r?.revenue != null || r?.expense != null,
       };
     }
     const r = report(s, year, `${year}-${m}-01`, `${year}-${m}-31`);
     return {
       month: i + 1,
-      revenue: r.revenue,
-      expense: r.expense,
-      profit: r.profit,
-      available: true,
+      revenue: s.years.some((y) => y.year === year) ? r.revenue : null,
+      expense: s.years.some((y) => y.year === year) ? r.expense : null,
+      profit: s.years.some((y) => y.year === year) ? r.profit : null,
+      available: s.years.some((y) => y.year === year),
     };
   });
 }

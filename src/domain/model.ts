@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const moneySchema = z.number().int().min(0).max(1_000_000_000_000);
+export const signedMoneySchema = z.number().int().min(-1_000_000_000_000).max(1_000_000_000_000);
 export const dateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -264,8 +265,8 @@ export const historicalSummarySchema = z.object({
     .array(
       z.object({
         month: z.number().int().min(1).max(12),
-        revenue: moneySchema,
-        expense: moneySchema,
+        revenue: signedMoneySchema.nullable(),
+        expense: signedMoneySchema.nullable(),
       }),
     )
     .max(12)
@@ -274,6 +275,7 @@ export const historicalSummarySchema = z.object({
 export type HistoricalSummary = z.infer<typeof historicalSummarySchema>;
 export const historicalSchema = z.object({
   schema_version: z.literal('1.0'),
+  book: z.enum(['business', 'misc']).optional(),
   year: yearSchema,
   data_completeness: z.enum(['summary_only', 'ledger', 'ledger_and_evidence', 'full']),
   accounts: z
