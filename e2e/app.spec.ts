@@ -2,6 +2,61 @@ import { test, expect, type Page } from '@playwright/test';
 import fs from 'node:fs/promises';
 import JSZip from 'jszip';
 import { fakeDrive, connectDrive, clientId } from './drive-fixture';
+test('スマホで資料台帳を検索し確認事項へ回答できる', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await ready(page, '/#archive');
+  const archive = {
+    schema_version: '1.0',
+    title: '架空の資料',
+    folder_url: 'https://drive.google.com/drive/folders/example',
+    documents: [
+      {
+        id: 'example-doc',
+        year: 2020,
+        book: 'common',
+        name: '架空の領収書.pdf',
+        category: '領収書',
+        original_path: '例/領収書.pdf',
+        drive_url: 'https://drive.google.com/file/d/example/view',
+        sha256: 'a'.repeat(64),
+        text: '文 房 具 店',
+        note: '検証用の架空データ',
+      },
+    ],
+    issues: [
+      {
+        id: 'example-issue',
+        year: 2020,
+        book: 'common',
+        title: '日付の確認',
+        detail: '利用明細を確認してください',
+        source_ids: ['example-doc'],
+      },
+    ],
+  };
+  await page
+    .locator('input[type=file]')
+    .setInputFiles({
+      name: 'example.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from(JSON.stringify(archive)),
+    });
+  await page.getByRole('button', { name: 'この台帳を登録', exact: true }).click();
+  await page.getByLabel('資料名・元の場所・読み取り文字で検索').fill('文房具');
+  await expect(page.locator('.archive-document').first()).toContainText('架空の領収書.pdf');
+  await page.getByRole('button', { name: '確認事項（1）', exact: true }).click();
+  await page.getByLabel('回答・判断の根拠').fill('利用明細で日付を確認しました');
+  await page.getByLabel('確認状況').selectOption('resolved');
+  await page.getByRole('button', { name: '回答を保存', exact: true }).click();
+  await expect(page.getByText('確認記録を保存しました', { exact: true })).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: '確認事項（1）', exact: true }).click();
+  await expect(page.getByLabel('回答・判断の根拠')).toHaveValue('利用明細で日付を確認しました');
+  await expect(page.getByLabel('確認状況')).toHaveValue('resolved');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+});
 async function ready(page: Page, url = '/') {
   await page.goto(url);
   await expect(page.getByRole('heading', { level: 1 })).not.toHaveText('青色コンパス');
