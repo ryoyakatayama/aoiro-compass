@@ -1,7 +1,7 @@
 {
   "name": "aoiro-compass",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "青色コンパス — 個人事業の数字と税務相談をつなぐローカルファースト会計PWA",
   "engines": {
@@ -10,6 +10,10 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
+    "build:private": "node scripts/build-private.mjs",
+    "start": "node server/index.mjs",
+    "password:hash": "node server/password.mjs",
+    "test:server": "node --test server/server.test.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -39,6 +43,6 @@
     "typescript": "^5.9.2",
     "vite": "^7.1.5",
     "vite-plugin-pwa": "^1.0.3",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
   }
 }

@@ -1,0 +1,10 @@
+node_modules
+dist
+dist-private
+.git
+.env*
+*.zip
+*.sqlite*
+test-results
+playwright-report
+*.tsbuildinfo
