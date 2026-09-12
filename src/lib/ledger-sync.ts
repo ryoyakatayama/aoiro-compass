@@ -1,4 +1,4 @@
-import { newId, now } from '../domain/model';
+import { newId, now, profileSchema } from '../domain/model';
 import { archiveSetting, archiveResponsePrefix } from '../domain/archive';
 import type { Store } from '../db/store';
 import { Engine, demoMode, flushStagedBackups } from './persistence';
@@ -36,6 +36,33 @@ export function upgradePendingArchives(pending: Revision[]) {
         value.length > 10000
       )
         doc.changes[key] = { kind: 'source_archive_setting', value };
+}
+export function canBootstrapFromCloud(store: Store, remote: SyncData) {
+  const state = readState(store);
+  if (
+    state.heads.length ||
+    state.pending.length ||
+    Object.keys(state.baseline).length ||
+    !Object.keys(remote).some((k) => k.startsWith('fiscal_years:'))
+  )
+    return false;
+  const events = store.all('SELECT event_type FROM audit_events');
+  if (events.length !== 1 || events[0].event_type !== 'fiscal_year_created') return false;
+  const snapshot = store.snapshot();
+  if (
+    snapshot.years.length !== 1 ||
+    snapshot.years[0].status !== 'active' ||
+    canonical(snapshot.profile) !== canonical(profileSchema.parse({}))
+  )
+    return false;
+  const local = exportSyncData(store);
+  return Object.keys(local).every(
+    (key) =>
+      ['accounts:', 'profile:', 'fiscal_years:', 'audit_events:'].some((prefix) =>
+        key.startsWith(prefix),
+      ) ||
+      (key === 'shared:drive_root' && local[key] === remote[key]),
+  );
 }
 export type SyncStatus = {
   phase: 'off' | 'waiting' | 'syncing' | 'synced' | 'conflict' | 'error';
@@ -164,7 +191,7 @@ export class LedgerSync {
         throw new Error('同期履歴が5万件を超えました。整理前にバックアップしてください');
       const docs: Revision[] = [];
       for (const file of files) docs.push(await this.drive.readRevision(file));
-      materialize(docs);
+      const cloud = materialize(docs);
       // Originals must have stable Drive IDs before their metadata is shared.
       const years = [
         ...new Set(
@@ -174,7 +201,13 @@ export class LedgerSync {
         ),
       ];
       for (const year of years) await this.drive.flushQueue(year);
-      const state = await this.engine.write((st) => this.freeze(st));
+      const state = await this.engine.write((st) => {
+        // A genuinely untouched device has no user edits to publish. Adopt the existing
+        // graph as its starting point, then use the normal validated merge/backup path.
+        if (canBootstrapFromCloud(st, cloud.data))
+          saveState(st, { heads: cloud.heads, baseline: exportSyncData(st), pending: [] });
+        return this.freeze(st);
+      });
       const known = new Map(docs.map((d) => [d.id, d]));
       for (const doc of state.pending) {
         revisionSchema.parse(doc);
