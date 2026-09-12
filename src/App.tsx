@@ -45,8 +45,11 @@ import Consult from './ui/Consult';
 import SettingsPage from './ui/Settings';
 import Closing from './ui/Closing';
 import ArchivePage from './ui/Archive';
+import DriveHub, { DriveStatus } from './ui/DriveHub';
+import Filing from './ui/Filing';
 const nav: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'dashboard', label: 'ダッシュボード', icon: LayoutDashboard },
+  { id: 'drive', label: 'Google Drive同期', icon: Cloud },
   { id: 'ledger', label: '仕訳・記帳', icon: BookOpen },
   { id: 'evidence', label: '証憑ライブラリ', icon: Files },
   { id: 'bank', label: '銀行・カード照合', icon: Landmark },
@@ -54,12 +57,16 @@ const nav: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'reports', label: '帳簿・レポート', icon: ChartNoAxesCombined },
   { id: 'consult', label: 'AI税務相談', icon: MessageCircle },
   { id: 'archive', label: '過年度資料', icon: Files },
-  { id: 'closing', label: '年度締め', icon: LockKeyhole },
+  { id: 'filing', label: '確定申告の準備', icon: Files },
+  { id: 'closing', label: '年度締め・繰越', icon: LockKeyhole },
 ];
 export default function App({ engine }: { engine: Engine }) {
   const s = useSyncExternalStore(engine.subscribe, engine.getSnapshot);
   const [page, setPage] = useState<Page>((location.hash.slice(1) as Page) || 'dashboard'),
-    [year, setYear] = useState(s.years[0].year),
+    [year, setYear] = useState(() => {
+      const saved = Number(localStorage.getItem(`aoiro-selected-year-${bookKind}-${demoMode}`));
+      return s.years.some((y) => y.year === saved) ? saved : s.years[0].year;
+    }),
     [mobile, setMobile] = useState(false),
     [toast, setToast] = useState(''),
     [busy, setBusy] = useState(false),
@@ -108,6 +115,9 @@ export default function App({ engine }: { engine: Engine }) {
       document.removeEventListener('visibilitychange', synchronize);
     };
   }, [engine, ledgerSync, connected, s.settings.ledger_sync_enabled]);
+  useEffect(() => {
+    localStorage.setItem(`aoiro-selected-year-${bookKind}-${demoMode}`, String(year));
+  }, [year]);
   useEffect(() => {
     if (!s.years.some((y) => y.year === year)) setYear(s.years[0].year);
   }, [s.years, year]);
@@ -159,7 +169,14 @@ export default function App({ engine }: { engine: Engine }) {
     await run(async () => {
       if (!drive.connected) {
         const id = s.settings.google_client_id || import.meta.env.VITE_GOOGLE_CLIENT_ID;
-        if (!id) throw new Error('設定画面でGoogle OAuth Client IDを入力してください');
+        if (!id) {
+          setPage('settings');
+          location.hash = 'settings';
+          setTimeout(() => document.getElementById('drive-configuration')?.scrollIntoView(), 0);
+          throw new Error(
+            '初回の接続設定が必要です。「Google Driveとの連携」にClient IDを入力してください',
+          );
+        }
         await drive.connect(id);
         setConnected(true);
       }
@@ -191,6 +208,8 @@ export default function App({ engine }: { engine: Engine }) {
   };
   const pageComponent = {
     dashboard: <Dashboard />,
+    drive: <DriveHub />,
+    filing: <Filing />,
     ledger: <Ledger />,
     evidence: <Evidence />,
     bank: <Bank />,
@@ -270,7 +289,7 @@ export default function App({ engine }: { engine: Engine }) {
                 <br />
                 原本はいつものDriveに。
               </p>
-              <button onClick={() => navigate('settings')}>
+              <button onClick={() => navigate('drive')}>
                 保存とバックアップ
                 <ArrowUpRight size={14} />
               </button>
@@ -283,7 +302,7 @@ export default function App({ engine }: { engine: Engine }) {
               <span>事業情報・設定</span>
             </button>
             <div className="version">
-              AOIRO COMPASS <span>v0.3</span>
+              AOIRO COMPASS <span>v0.4</span>
             </div>
           </div>
         </aside>
@@ -319,7 +338,7 @@ export default function App({ engine }: { engine: Engine }) {
                   オフライン
                 </span>
               )}
-              <button className="drive-indicator" onClick={() => navigate('settings')}>
+              <button className="drive-indicator" onClick={() => navigate('drive')}>
                 <span className={`status-dot ${drive.connected ? '' : 'disconnected'}`} />
                 {syncStatus.phase === 'synced'
                   ? 'Drive保存済み'
@@ -375,6 +394,7 @@ export default function App({ engine }: { engine: Engine }) {
               {job && <small>{job}</small>}
             </div>
           )}
+          {page !== 'drive' && <DriveStatus compact />}
           <main key={page}>
             <ErrorBoundary key={`${page}-${year}`}>{pageComponent}</ErrorBoundary>
           </main>

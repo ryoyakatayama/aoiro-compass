@@ -3623,6 +3623,156 @@ th {
   }
 }
 
-.archive-document { padding: 18px 0; border-bottom: 1px solid #dce4de; overflow-wrap: anywhere; }
-.archive-document summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
-.archive-text { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 360px; overflow: auto; }
+.archive-document {
+  padding: 18px 0;
+  border-bottom: 1px solid #dce4de;
+  overflow-wrap: anywhere;
+}
+.archive-document summary {
+  cursor: pointer;
+  padding: 8px 0;
+  font-weight: 600;
+}
+.archive-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  max-height: 360px;
+  overflow: auto;
+}
+/* Drive status is visible on phones as well as desktop. */
+.drive-status {
+  margin: 20px 0;
+  padding: 22px;
+  border: 1px solid #c9d8d3;
+  border-radius: 14px;
+  background: #eef4f0;
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.drive-status.compact {
+  margin: 14px 32px 0;
+  padding: 14px 20px;
+}
+.drive-status.saved {
+  background: #f0f6e9;
+  border-color: #d5e4c5;
+}
+.drive-status.problem {
+  background: #fff3e5;
+  border-color: #e5c798;
+}
+.drive-status-copy {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex: 1;
+  min-width: 220px;
+}
+.drive-status-copy strong {
+  display: block;
+  font-size: 14px;
+}
+.drive-status-copy small {
+  display: block;
+  margin-top: 6px;
+  color: #53665f;
+  font-size: 12px;
+}
+.workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+.workflow-grid p {
+  line-height: 1.85;
+}
+.filing-path {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 16px 0 26px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.filing-group + .filing-group {
+  margin-top: 32px;
+}
+.filing-group h3 {
+  border-bottom: 2px solid #dce5da;
+  padding-bottom: 12px;
+}
+.filing-item {
+  padding: 17px 0;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  gap: 22px;
+  align-items: center;
+}
+.filing-item > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.filing-item p {
+  font-size: 13px;
+  line-height: 1.8;
+  margin: 8px 0;
+  color: #53665f;
+}
+.filing-item .actions {
+  flex-shrink: 0;
+}
+.filing-item small {
+  overflow-wrap: anywhere;
+}
+#drive-configuration,
+#cloud-backups {
+  scroll-margin-top: 90px;
+}
+@media (max-width: 850px) {
+  .workflow-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .drive-status.compact {
+    margin: 12px 16px 0;
+  }
+  .filing-item {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .filing-path {
+    gap: 10px;
+    font-size: 12px;
+  }
+}
+@media (max-width: 500px) {
+  .drive-status {
+    padding: 16px;
+  }
+  .drive-status .actions {
+    width: 100%;
+  }
+  .drive-status .button {
+    flex: 1;
+    justify-content: center;
+  }
+  .drive-status-copy {
+    min-width: 0;
+  }
+  .drive-status-copy > svg {
+    flex-shrink: 0;
+  }
+}
+@media print {
+  .drive-status,
+  .filing-path {
+    display: none !important;
+  }
+}
