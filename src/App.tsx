@@ -44,6 +44,7 @@ import Reports from './ui/Reports';
 import Consult from './ui/Consult';
 import SettingsPage from './ui/Settings';
 import Closing from './ui/Closing';
+import ArchivePage from './ui/Archive';
 const nav: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'dashboard', label: 'ダッシュボード', icon: LayoutDashboard },
   { id: 'ledger', label: '仕訳・記帳', icon: BookOpen },
@@ -52,6 +53,7 @@ const nav: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'assets', label: '固定資産', icon: Package },
   { id: 'reports', label: '帳簿・レポート', icon: ChartNoAxesCombined },
   { id: 'consult', label: 'AI税務相談', icon: MessageCircle },
+  { id: 'archive', label: '過年度資料', icon: Files },
   { id: 'closing', label: '年度締め', icon: LockKeyhole },
 ];
 export default function App({ engine }: { engine: Engine }) {
@@ -194,6 +196,7 @@ export default function App({ engine }: { engine: Engine }) {
     bank: <Bank />,
     assets: <Assets />,
     reports: <Reports />,
+    archive: <ArchivePage />,
     consult: <Consult />,
     closing: <Closing />,
     settings: <SettingsPage />,

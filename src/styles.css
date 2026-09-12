@@ -3622,3 +3622,7 @@ th {
     grid-template-columns: 1fr;
   }
 }
+
+.archive-document { padding: 18px 0; border-bottom: 1px solid #dce4de; overflow-wrap: anywhere; }
+.archive-document summary { cursor: pointer; padding: 8px 0; font-weight: 600; }
+.archive-text { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 360px; overflow: auto; }
