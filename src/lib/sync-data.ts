@@ -1,3 +1,9 @@
+import {
+  archiveSchema,
+  archiveResponseSchema,
+  archiveSetting,
+  archiveResponsePrefix,
+} from '../domain/archive';
 import type { Store } from '../db/store';
 import { profileSchema } from '../domain/model';
 import type { Entity, SyncData } from './sync-graph';
@@ -47,6 +53,11 @@ export function exportSyncData(store: Store): SyncData {
   // Tokens, Client ID, sync state, queue errors and device preferences never leave this device.
   const root = store.setting('drive_root');
   if (root) data['shared:drive_root'] = root;
+  for (const row of store.all('SELECT key,value FROM settings WHERE key = ? OR key LIKE ?', [
+    archiveSetting,
+    archiveResponsePrefix + '%',
+  ]))
+    data['shared:' + String(row.key)] = String(row.value);
   return data;
 }
 export function importSyncData(store: Store, data: SyncData) {
@@ -96,6 +107,13 @@ export function importSyncData(store: Store, data: SyncData) {
       profile[id] = value;
       continue;
     }
+    if (key === 'shared:' + archiveSetting || key.startsWith('shared:' + archiveResponsePrefix)) {
+      if (typeof value !== 'string') throw new Error('資料台帳の同期データが不正です');
+      (key === 'shared:' + archiveSetting ? archiveSchema : archiveResponseSchema).parse(
+        JSON.parse(value),
+      );
+      continue;
+    }
     if (key === 'shared:drive_root' && typeof value === 'string') continue;
     if (!(tables as readonly string[]).includes(table))
       throw new Error('未対応の同期データです: ' + table);
@@ -118,6 +136,13 @@ export function importSyncData(store: Store, data: SyncData) {
     for (const row of entry.links) insert('evidence_transaction_links', row);
   }
   store.setSetting('profile', JSON.stringify(profileSchema.parse(profile)));
+  store.run('DELETE FROM settings WHERE key = ? OR key LIKE ?', [
+    archiveSetting,
+    archiveResponsePrefix + '%',
+  ]);
+  for (const [key, value] of Object.entries(data))
+    if (key === 'shared:' + archiveSetting || key.startsWith('shared:' + archiveResponsePrefix))
+      store.setSetting(key.slice(7), String(value));
   const previousRoot = store.setting('drive_root') || '';
   const nextRoot = String(data['shared:drive_root'] || '');
   store.setSetting('drive_root', nextRoot);

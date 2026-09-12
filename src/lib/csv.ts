@@ -11,9 +11,13 @@ export function exportCsv(rows: unknown[][]) {
   );
 }
 export async function readTextFile(file: File, encoding = 'utf-8') {
-  return new TextDecoder(encoding, { fatal: true })
-    .decode(await file.arrayBuffer())
-    .replace(/^\uFEFF/, '');
+  const bytes = await file.arrayBuffer();
+  const header = new Uint8Array(bytes, 0, Math.min(bytes.byteLength, 4));
+  if (header[0] === 0x50 && header[1] === 0x4b && header[2] === 3 && header[3] === 4)
+    throw new Error(
+      'このファイルの中身はExcel形式などのZIPファイルです。Excelで開いてCSV UTF-8として保存してから取り込んでください。拡張子だけの変更では変換できません。',
+    );
+  return new TextDecoder(encoding, { fatal: true }).decode(bytes).replace(/^\uFEFF/, '');
 }
 export function parseBankCsv(
   text: string,
