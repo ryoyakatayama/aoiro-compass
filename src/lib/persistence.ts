@@ -6,6 +6,11 @@ import { Store } from '../db/store';
 import type { Snapshot } from '../domain/model';
 let SQLPromise: ReturnType<typeof initSqlJs> | undefined;
 const getSQL = () => (SQLPromise ??= initSqlJs({ locateFile: () => wasmUrl }));
+let backupUploader:
+  ((bytes: Uint8Array, id: string, reason: string) => Promise<boolean>) | undefined;
+export function configureBackupUpload(upload?: typeof backupUploader) {
+  backupUploader = upload;
+}
 export const demoMode =
   typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
 const namespace =
@@ -27,18 +32,78 @@ export async function getBlob(id: string) {
 }
 export async function listBackups() {
   const db = await dbPromise();
-  return (await db.getAll('backups')).sort((a, b) => b.created.localeCompare(a.created)) as {
+  const rows = (await db.getAll('backups')).sort((a, b) => b.created.localeCompare(a.created)) as {
     id: string;
     created: string;
     reason: string;
     bytes: Uint8Array;
   }[];
+  return rows;
 }
 export async function saveBackup(bytes: Uint8Array, reason: string) {
   const id = `${new Date().toISOString().replace(/[:.]/g, '-')}_${crypto.randomUUID().slice(0, 8)}`;
   const db = await dbPromise();
   await db.put('backups', { id, created: new Date().toISOString(), reason, bytes });
+  if (backupUploader && (await backupUploader(bytes, id, reason))) await db.delete('backups', id);
   return id;
+}
+export async function flushStagedBackups(upload: NonNullable<typeof backupUploader>) {
+  for (const backup of await listBackups()) {
+    if (await upload(backup.bytes, backup.id, backup.reason))
+      await (await dbPromise()).delete('backups', backup.id);
+  }
+}
+export async function recoverLocalCache(
+  data: import('./sync-graph').SyncData,
+  heads: string[],
+  scope: string,
+  clientId: string,
+  preserve: (bytes: Uint8Array) => Promise<void>,
+) {
+  const { importSyncData, exportSyncData } = await import('./sync-data');
+  const restored = new Store(await getSQL());
+  try {
+    restored.atomic(() => {
+      restored.setSetting('income_category', bookKind);
+      importSyncData(restored, data);
+      restored.setSetting('google_client_id', clientId);
+      restored.setSetting('ledger_sync_scope', scope);
+      restored.setSetting(
+        'ledger_sync_state',
+        JSON.stringify({ heads, baseline: exportSyncData(restored), pending: [] }),
+      );
+    });
+    restored.validate();
+    const bytes = restored.export();
+    await navigator.locks.request(namespace, async () => {
+      if (navigator.storage?.getDirectory) {
+        const root = await navigator.storage.getDirectory();
+        let handle: FileSystemFileHandle | undefined;
+        try {
+          handle = await root.getFileHandle(`${namespace}.sqlite`);
+        } catch (error) {
+          if ((error as DOMException).name !== 'NotFoundError') throw error;
+        }
+        if (handle) await preserve(new Uint8Array(await (await handle.getFile()).arrayBuffer()));
+        handle ||= await root.getFileHandle(`${namespace}.sqlite`, { create: true });
+        const stream = await handle.createWritable();
+        try {
+          await stream.write(new Uint8Array(bytes));
+          await stream.close();
+        } catch (error) {
+          await stream.abort().catch(() => {});
+          throw error;
+        }
+      } else {
+        const db = await dbPromise(),
+          previous = await db.get('files', 'ledger');
+        if (previous) await preserve(previous);
+        await db.put('files', bytes, 'ledger');
+      }
+    });
+  } finally {
+    restored.close();
+  }
 }
 
 export class Engine {
@@ -141,13 +206,17 @@ export class Engine {
     this.queue = next.catch(() => {});
     return next;
   }
-  async write<T>(fn: (store: Store) => T, backupReason?: string): Promise<T> {
+  async write<T>(
+    fn: (store: Store) => T,
+    backupReason?: string | ((store: Store) => string | undefined),
+  ): Promise<T> {
     return this.serial(() =>
       this.lock(async () => {
         const data = await this.read();
         const fresh = new Store(await getSQL(), data);
         try {
-          if (backupReason) await saveBackup(fresh.export(), backupReason);
+          const reason = typeof backupReason === 'function' ? backupReason(fresh) : backupReason;
+          if (reason) await saveBackup(fresh.export(), reason);
           const result = fresh.atomic(() => {
             const result = fn(fresh);
             fresh.setSetting('revision', String(Number(fresh.setting('revision') || '0') + 1));
@@ -190,7 +259,29 @@ export class Engine {
             throw new Error(
               'バックアップの所得区分が違います。該当する帳簿に切り替えて復元してください',
             );
-          await saveBackup((await this.read()) || this.store.export(), '復元前');
+          const beforeBytes = (await this.read()) || this.store.export();
+          await saveBackup(beforeBytes, '復元前');
+          const previous = new Store(await getSQL(), beforeBytes);
+          try {
+            if (previous.setting('ledger_sync_scope')) {
+              if (
+                restored.setting('ledger_sync_scope') &&
+                restored.setting('ledger_sync_scope') !== previous.setting('ledger_sync_scope')
+              )
+                throw new Error(
+                  '異なるGoogleアカウントの同期済みバックアップは、この帳簿に復元できません',
+                );
+              restored.atomic(() => {
+                restored.run("DELETE FROM settings WHERE key GLOB 'ledger_sync_*'");
+                for (const row of previous.all(
+                  "SELECT key,value FROM settings WHERE key GLOB 'ledger_sync_*'",
+                ))
+                  restored.setSetting(String(row.key), String(row.value));
+              });
+            }
+          } finally {
+            previous.close();
+          }
           restored.atomic(() => restored.event('database_restored', 'database'));
           await this.persist(restored.export());
           this.store.close();

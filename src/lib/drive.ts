@@ -1,6 +1,8 @@
 import { Engine, getBlob, putBlob, sha256, demoMode } from './persistence';
 import { isMisc } from './book';
 import { newId, now, type Evidence } from '../domain/model';
+import { bookKind } from './book';
+import { canonical, revisionSchema, type Revision } from './sync-graph';
 export interface DriveFile {
   id: string;
   name: string;
@@ -8,10 +10,11 @@ export interface DriveFile {
   size?: string;
   modifiedTime?: string;
   trashed?: boolean;
+  shared?: boolean;
   parents?: string[];
   appProperties?: Record<string, string>;
 }
-const FIELDS = 'id,name,mimeType,size,modifiedTime,trashed,parents,appProperties';
+const FIELDS = 'id,name,mimeType,size,modifiedTime,trashed,shared,parents,appProperties';
 const folderMime = 'application/vnd.google-apps.folder';
 export const acceptedMimes = [
   'application/pdf',
@@ -31,6 +34,11 @@ export class DriveAdapter {
   private token = '';
   private expires = 0;
   private loading: Promise<void> | undefined;
+  private identity = '';
+  private clientId = '';
+  get syncScope() {
+    return this.identity && this.clientId ? `${this.clientId}:${this.identity}` : '';
+  }
   constructor(private engine: Engine) {}
   get connected() {
     return !!this.token && Date.now() < this.expires;
@@ -56,10 +64,24 @@ export class DriveAdapter {
       const client = (window as any).google.accounts.oauth2.initTokenClient({
         client_id: clientId,
         scope:
-          'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file',
-        callback: (response: { error?: string; access_token: string; expires_in: number }) => {
+          'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.appdata',
+        callback: (response: {
+          error?: string;
+          access_token: string;
+          expires_in: number;
+          scope?: string;
+        }) => {
           if (response.error) {
             reject(new Error(response.error));
+            return;
+          }
+          const scopes = new Set((response.scope || '').split(' '));
+          if (
+            !['drive.readonly', 'drive.file', 'drive.appdata'].every((s) =>
+              scopes.has('https://www.googleapis.com/auth/' + s),
+            )
+          ) {
+            reject(new Error('原本と帳簿の同期に必要な権限が許可されていません'));
             return;
           }
           this.token = response.access_token;
@@ -70,10 +92,25 @@ export class DriveAdapter {
       });
       client.requestAccessToken({ prompt: '' });
     });
+    try {
+      const about = await (await this.request('about?fields=user(permissionId)')).json();
+      if (!about.user?.permissionId) throw new Error('Googleアカウントを識別できません');
+      this.identity = about.user.permissionId;
+      this.clientId = clientId;
+      const pinned = this.engine.snapshot.settings.ledger_sync_scope;
+      if (pinned && pinned !== this.syncScope)
+        throw new Error(
+          'この帳簿は別のGoogleアカウントまたはClient IDと同期済みです。同じ接続先を選んでください',
+        );
+    } catch (error) {
+      this.disconnect();
+      throw error;
+    }
   }
   disconnect() {
     this.token = '';
     this.expires = 0;
+    this.identity = '';
   }
   private async request(path: string, init: RequestInit = {}, upload = false): Promise<Response> {
     if (!this.connected) throw new Error('Google Driveに再接続してください');
@@ -94,7 +131,7 @@ export class DriveAdapter {
     }
     return r;
   }
-  async list(q: string) {
+  async list(q: string, spaces = 'drive') {
     const files: DriveFile[] = [];
     let page = '';
     do {
@@ -102,7 +139,7 @@ export class DriveAdapter {
         q,
         fields: `nextPageToken,files(${FIELDS})`,
         pageSize: '1000',
-        spaces: 'drive',
+        spaces,
         ...(page ? { pageToken: page } : {}),
       });
       const result = await (await this.request('files?' + p)).json();
@@ -116,6 +153,122 @@ export class DriveAdapter {
       await this.request(`files/${encodeURIComponent(id)}?fields=${encodeURIComponent(FIELDS)}`)
     ).json() as Promise<DriveFile>;
   }
+  async listRevisions() {
+    return this.list(
+      `trashed=false and appProperties has { key='aoiroSync' and value='1' } and appProperties has { key='book' and value='${bookKind}' }`,
+      'appDataFolder',
+    );
+  }
+  async readRevision(file: DriveFile, cache = true): Promise<Revision> {
+    if (Number(file.size || 0) > 8 * 1024 * 1024) throw new Error('同期ファイルが大きすぎます');
+    const hash = file.appProperties?.sha256;
+    if (!hash || !/^[a-f0-9]{64}$/.test(hash))
+      throw new Error('同期ファイルのチェックサムがありません');
+    const cacheKey = `sync-cache:${this.syncScope}:${file.id}:${hash}:${file.modifiedTime}`;
+    let blob = cache ? await getBlob(cacheKey) : undefined;
+    if (!blob) {
+      blob = await (await this.request(`files/${encodeURIComponent(file.id)}?alt=media`)).blob();
+      if (blob.size > 8 * 1024 * 1024 || (await sha256(blob)) !== hash)
+        throw new Error('同期ファイルの検証に失敗しました');
+      if (cache) await putBlob(cacheKey, blob);
+    }
+    const doc = revisionSchema.parse(JSON.parse(await blob.text()));
+    if (doc.book !== bookKind || doc.id !== file.appProperties?.revision)
+      throw new Error('同期ファイルの所得区分またはIDが違います');
+    return doc;
+  }
+  async appendRevision(doc: Revision) {
+    if (doc.book !== bookKind) throw new Error('所得区分が違います');
+    const text = canonical(revisionSchema.parse(doc));
+    const hash = await sha256(text);
+    const boundary = `aoiro_${newId()}`;
+    const metadata = {
+      name: `aoiro-${doc.book}-${doc.id}.json`,
+      mimeType: 'application/json',
+      parents: ['appDataFolder'],
+      appProperties: { aoiroSync: '1', book: doc.book, revision: doc.id, sha256: hash },
+    };
+    const body = new Blob([
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n`,
+      text,
+      `\r\n--${boundary}--`,
+    ]);
+    if (body.size > 8 * 1024 * 1024) throw new Error('1回の同期データが大きすぎます');
+    await this.request(
+      'files?uploadType=multipart&fields=id',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+        body,
+      },
+      true,
+    );
+  }
+  async listBackups() {
+    return (
+      await this.list(
+        `trashed=false and appProperties has { key='aoiroBackup' and value='1' } and appProperties has { key='book' and value='${bookKind}' }`,
+        'appDataFolder',
+      )
+    ).sort((a, b) =>
+      (b.appProperties?.created || '').localeCompare(a.appProperties?.created || ''),
+    );
+  }
+  async storeBackup(bytes: Uint8Array, id: string, reason: string) {
+    if (bytes.length > 100 * 1024 * 1024) throw new Error('バックアップは100MB以下にしてください');
+    const hash = await sha256(bytes);
+    const exists = await this.list(
+      `trashed=false and appProperties has { key='aoiroBackup' and value='1' } and appProperties has { key='book' and value='${bookKind}' } and appProperties has { key='backupId' and value='${quote(id)}' }`,
+      'appDataFolder',
+    );
+    if (exists.length) {
+      if (exists.some((f) => f.appProperties?.sha256 !== hash))
+        throw new Error('同じバックアップIDの内容が一致しません');
+      return exists[0];
+    }
+    const boundary = `aoiro_${newId()}`;
+    const metadata = {
+      name: `${bookKind}_${id}.sqlite`,
+      mimeType: 'application/octet-stream',
+      parents: ['appDataFolder'],
+      appProperties: {
+        aoiroBackup: '1',
+        book: bookKind,
+        backupId: id,
+        sha256: hash,
+        created: now(),
+        reason: reason.slice(0, 30),
+      },
+    };
+    const body = new Blob([
+      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n`,
+      new Uint8Array(bytes),
+      `\r\n--${boundary}--`,
+    ]);
+    return (
+      await this.request(
+        `files?uploadType=multipart&fields=${encodeURIComponent(FIELDS)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+          body,
+        },
+        true,
+      )
+    ).json() as Promise<DriveFile>;
+  }
+  async downloadBackup(file: DriveFile) {
+    if (file.appProperties?.book !== bookKind || Number(file.size || 0) > 100 * 1024 * 1024)
+      throw new Error('バックアップの所得区分またはサイズが不正です');
+    const bytes = new Uint8Array(await (await this.download(file.id)).arrayBuffer());
+    if (
+      bytes.length > 100 * 1024 * 1024 ||
+      !file.appProperties?.sha256 ||
+      (await sha256(bytes)) !== file.appProperties.sha256
+    )
+      throw new Error('バックアップが破損しています');
+    return bytes;
+  }
   async download(id: string) {
     const r = await this.request(`files/${encodeURIComponent(id)}?alt=media`);
     return r.blob();
@@ -124,7 +277,13 @@ export class DriveAdapter {
     const existing = await this.list(
       `trashed=false and mimeType='${folderMime}' and name='${quote(name)}' and '${quote(parent || 'root')}' in parents`,
     );
-    if (existing[0]) return existing[0].id;
+    if (existing[0]) {
+      if (existing[0].shared)
+        throw new Error(
+          '共有されたフォルダは使用できません。自分だけが使うDriveフォルダを選んでください',
+        );
+      return existing[0].id;
+    }
     const result = await (
       await this.request('files?fields=id', {
         method: 'POST',
@@ -144,6 +303,7 @@ export class DriveAdapter {
       const meta = await this.metadata(root);
       if (meta.mimeType !== folderMime || meta.trashed)
         throw new Error('保存先にはDriveフォルダIDを指定してください');
+      if (meta.shared) throw new Error('共有されたフォルダは原本保存先にできません');
     } else {
       root = await this.folder(isMisc ? '雑所得_青色コンパス' : '確定申告_青色コンパス');
       await this.engine.write((s) => s.setSetting('drive_root', root));
@@ -309,17 +469,29 @@ export class DriveAdapter {
         if (Number(f.size || 0) > 25 * 1024 * 1024)
           throw new Error(`${f.name}: 25MBを超えるため索引化できません`);
         let hash = old?.sha256;
+        let filename = old?.filename || f.name,
+          mime = old?.mime_type || f.mimeType,
+          size = old?.size_bytes || Number(f.size || 0);
         if (!old || old.modified_time !== f.modifiedTime || old.status === 'missing') {
           const blob = await this.download(f.id);
           hash = await sha256(blob);
+          size = blob.size;
+          mime = blob.type;
+          filename = f.name;
         }
         changes.push({
-          id: old?.id || newId(),
+          id:
+            old?.id ||
+            (/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(
+              f.appProperties?.aoiroEvidenceId || '',
+            )
+              ? f.appProperties!.aoiroEvidenceId
+              : newId()),
           year,
           drive_file_id: f.id,
-          filename: f.name,
-          mime_type: f.mimeType,
-          size_bytes: Number(f.size || 0),
+          filename,
+          mime_type: mime,
+          size_bytes: size,
           sha256: hash!,
           original_sha256: old?.original_sha256 || hash!,
           modified_time: f.modifiedTime || null,
