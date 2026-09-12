@@ -410,6 +410,10 @@ export default function Settings() {
             onFile={(files) =>
               void run(async () => {
                 const value = historicalSchema.parse(JSON.parse(await files[0].text()));
+                if (value.book && value.book !== bookKind)
+                  throw new Error(
+                    'このデータは別の所得区分用です。事業所得／雑所得の帳簿を切り替えてください。',
+                  );
                 setHistory({ file: files[0], value });
               })
             }

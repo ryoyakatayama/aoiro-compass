@@ -63,9 +63,14 @@ export default function Reports() {
         : tab === 'pl'
           ? [
               ['科目', '金額'],
-              ...r.pl
-                .filter((a) => ['revenue', 'expense'].includes(a.type))
-                .map((a) => [a.name, a.balance]),
+              ...(r.summaryOnly
+                ? [
+                    ['売上・収益合計', r.revenue],
+                    ['必要経費合計', r.expense],
+                  ]
+                : r.pl
+                    .filter((a) => ['revenue', 'expense'].includes(a.type))
+                    .map((a) => [a.name, a.balance])),
               [profitLabel, r.profit],
             ]
           : tab === 'bs'

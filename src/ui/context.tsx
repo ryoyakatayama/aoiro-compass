@@ -9,6 +9,7 @@ export type Page =
   | 'evidence'
   | 'bank'
   | 'assets'
+  | 'archive'
   | 'reports'
   | 'consult'
   | 'closing'

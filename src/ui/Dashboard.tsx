@@ -17,6 +17,20 @@ import { report, monthly } from '../domain/accounting';
 import { yen, monthDay, today } from '../domain/model';
 import { isMisc, profitLabel } from '../lib/book';
 import { demoMode } from '../lib/persistence';
+function linePath(values: (number | null)[], xs: (i: number) => number, y: (n: number) => number) {
+  let previous = false;
+  return values
+    .map((n, i) => {
+      if (n === null) {
+        previous = false;
+        return '';
+      }
+      const segment = (previous ? 'L' : 'M') + (xs(i) + 3) + ',' + y(n);
+      previous = true;
+      return segment;
+    })
+    .join(' ');
+}
 export function TrendChart({ year, compare = true }: { year: number; compare?: boolean }) {
   const { s } = useApp();
   const [table, setTable] = useState(false);
@@ -33,15 +47,20 @@ export function TrendChart({ year, compare = true }: { year: number; compare?: b
     prev = monthly(s, year - 1);
   const max = Math.max(
     10000,
-    ...data.flatMap((m) => [m.revenue, m.expense, m.profit]),
-    ...prev.map((m) => (compare ? m.revenue : 0)),
+    ...data.flatMap((m) => (m.available ? [m.revenue ?? 0, m.expense ?? 0, m.profit ?? 0] : [0])),
+    ...prev.map((m) => (compare ? (m.revenue ?? 0) : 0)),
   );
-  const min = Math.min(0, ...data.map((m) => m.profit));
+  const min = Math.min(
+    0,
+    ...data.flatMap((m) => (m.available ? [m.revenue ?? 0, m.expense ?? 0, m.profit ?? 0] : [0])),
+    ...prev.map((m) => (compare ? (m.revenue ?? 0) : 0)),
+  );
   const y = (n: number) => 200 - ((n - min) / (max - min)) * 170;
   const xs = (i: number) => 62 + i * 54;
   const ticks = Array.from({ length: 4 }, (_, i) => min + ((max - min) * i) / 3);
   return (
     <>
+      <p className="small muted">未集計の月・項目は表示しません。0円と未集計を区別しています。</p>
       <div className="chart-legend">
         <span>
           <i className="dot revenue" />
@@ -77,9 +96,9 @@ export function TrendChart({ year, compare = true }: { year: number; compare?: b
               {data.map((m) => (
                 <tr key={m.month}>
                   <td>{m.month}月</td>
-                  <td>{m.available ? yen(m.revenue) : 'データなし'}</td>
-                  <td>{m.available ? yen(m.expense) : '—'}</td>
-                  <td>{m.available ? yen(m.profit) : '—'}</td>
+                  <td>{m.available && m.revenue !== null ? yen(m.revenue) : '未集計'}</td>
+                  <td>{m.available && m.expense !== null ? yen(m.expense) : '未集計'}</td>
+                  <td>{m.available && m.profit !== null ? yen(m.profit) : '未集計'}</td>
                 </tr>
               ))}
             </tbody>
@@ -103,56 +122,66 @@ export function TrendChart({ year, compare = true }: { year: number; compare?: b
           <line x1="42" x2="684" y1={y(0)} y2={y(0)} stroke="#ced9d2" />
           {data.map((m, i) => (
             <g key={i}>
-              <rect
-                x={xs(i) - 12}
-                y={y(Math.max(0, m.revenue))}
-                width="14"
-                height={Math.abs(y(m.revenue) - y(0))}
-                rx="3"
-                fill="#377c73"
-              >
-                <title>
-                  {m.month}月 売上 {yen(m.revenue)}
-                </title>
-              </rect>
-              <rect
-                x={xs(i) + 5}
-                y={y(Math.max(0, m.expense))}
-                width="14"
-                height={Math.abs(y(m.expense) - y(0))}
-                rx="3"
-                fill="#c9ddcb"
-              >
-                <title>
-                  {m.month}月 経費 {yen(m.expense)}
-                </title>
-              </rect>
+              {m.available && m.revenue !== null && (
+                <rect
+                  x={xs(i) - 12}
+                  y={y(Math.max(0, m.revenue))}
+                  width="14"
+                  height={Math.abs(y(m.revenue) - y(0))}
+                  rx="3"
+                  fill="#377c73"
+                >
+                  <title>
+                    {m.month}月 売上 {yen(m.revenue)}
+                  </title>
+                </rect>
+              )}
+              {m.available && m.expense !== null && (
+                <rect
+                  x={xs(i) + 5}
+                  y={y(Math.max(0, m.expense))}
+                  width="14"
+                  height={Math.abs(y(m.expense) - y(0))}
+                  rx="3"
+                  fill="#c9ddcb"
+                >
+                  <title>
+                    {m.month}月 経費 {yen(m.expense)}
+                  </title>
+                </rect>
+              )}
               <text x={xs(i) + 3} y="224" textAnchor="middle" className="chart-label">
                 {m.month}月
               </text>
             </g>
           ))}
           {compare && s.years.some((y) => y.year === year - 1) && (
-            <polyline
-              points={prev.map((m, i) => `${xs(i) + 3},${y(m.revenue)}`).join(' ')}
+            <path
+              d={linePath(
+                prev.map((m) => m.revenue),
+                xs,
+                y,
+              )}
               fill="none"
               stroke="#a7b4ae"
               strokeWidth="1.5"
               strokeDasharray="4 5"
             />
           )}
-          <polyline
-            points={data
-              .map((m, i) => (m.available ? `${xs(i) + 3},${y(m.profit)}` : ''))
-              .filter(Boolean)
-              .join(' ')}
+          <path
+            d={linePath(
+              data.map((m) => (m.available ? m.profit : null)),
+              xs,
+              y,
+            )}
             fill="none"
             stroke="#d6aa55"
             strokeWidth="2.5"
           />
           {data.map(
             (m, i) =>
-              m.available && (
+              m.available &&
+              m.profit !== null && (
                 <circle
                   key={i}
                   cx={xs(i) + 3}
@@ -178,8 +207,11 @@ export default function Dashboard() {
   const [period, setPeriod] = useState('year');
   const current = new Date();
   const month = year === current.getFullYear() ? current.getMonth() + 1 : 12;
+  const summaryOnly = s.years.find((y) => y.year === year)?.data_completeness === 'summary_only';
   const from =
-    period === 'month' ? `${year}-${String(month).padStart(2, '0')}-01` : `${year}-01-01`;
+    period === 'month' && !summaryOnly
+      ? `${year}-${String(month).padStart(2, '0')}-01`
+      : `${year}-01-01`;
   const to = year === current.getFullYear() ? today() : `${year}-12-31`;
   const r = report(s, year, from, to);
   const previous = report(
@@ -217,7 +249,7 @@ export default function Dashboard() {
           </button>
         }
       />
-      {!tx.length && (
+      {!tx.length && !r.summaryOnly && (
         <div className="welcome-banner">
           <div>
             <strong>青色コンパスへようこそ。</strong>
@@ -237,11 +269,16 @@ export default function Dashboard() {
           </span>
         </span>
         <div className="segmented">
-          <button className={period === 'year' ? 'selected' : ''} onClick={() => setPeriod('year')}>
+          <button
+            className={period === 'year' || summaryOnly ? 'selected' : ''}
+            onClick={() => setPeriod('year')}
+          >
             年累計
           </button>
           <button
-            className={period === 'month' ? 'selected' : ''}
+            disabled={summaryOnly}
+            title={summaryOnly ? '集計のみの過年度は年次合計を表示します' : ''}
+            className={period === 'month' && !summaryOnly ? 'selected' : ''}
             onClick={() => setPeriod('month')}
           >
             {month}月
@@ -279,7 +316,9 @@ export default function Dashboard() {
             </div>
             <div className="metric-value">{yen(m.value)}</div>
             <div className="metric-foot">
-              {hasPrevious && m.previous !== 0 ? (
+              {hasPrevious &&
+              m.previous !== 0 &&
+              (!previous.summaryOnly || (from.endsWith('-01-01') && to.endsWith('-12-31'))) ? (
                 <>
                   <span className={m.value - m.previous >= 0 ? 'trend-up' : 'trend-down'}>
                     {m.value - m.previous >= 0 ? '↗' : '↘'}{' '}
@@ -289,7 +328,11 @@ export default function Dashboard() {
                 </>
               ) : (
                 <span>
-                  {m.title === profitLabel ? '収入 − 経費（税引前）' : '確定済みの仕訳から集計'}
+                  {r.summaryOnly
+                    ? '過年度の年次集計値'
+                    : m.title === profitLabel
+                      ? '収入 − 経費（税引前）'
+                      : '確定済みの仕訳から集計'}
                 </span>
               )}
             </div>
