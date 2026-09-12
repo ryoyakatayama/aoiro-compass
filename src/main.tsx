@@ -6,6 +6,7 @@ import App from './App';
 import { Engine, demoMode } from './lib/persistence';
 import { seedDemo } from './demo';
 import './styles.css';
+import DriveRecovery from './ui/DriveRecovery';
 const root = createRoot(document.getElementById('root')!);
 root.render(
   <div className="boot">
@@ -14,27 +15,55 @@ root.render(
     <p>この端末の帳簿を開いています…</p>
   </div>,
 );
-const engine = new Engine();
-engine
-  .init()
-  .then(async () => {
-    if (demoMode) await engine.write(seedDemo);
-    root.render(<App engine={engine} />);
-    const update = registerSW({
-      onNeedRefresh() {
-        window.dispatchEvent(new CustomEvent('aoiro-update', { detail: () => void update(true) }));
-      },
+if (new URLSearchParams(location.search).get('recover') === '1' && !demoMode)
+  root.render(<DriveRecovery />);
+else {
+  const engine = new Engine();
+  engine
+    .init()
+    .then(async () => {
+      if (demoMode) await engine.write(seedDemo);
+      root.render(<App engine={engine} />);
+      if (import.meta.env.VITE_PRIVATE_HOST === '1') {
+        const check = async () => {
+          try {
+            const r = await fetch('/_auth/session', { cache: 'no-store' });
+            if (r.status === 401) location.replace('/_auth/login');
+          } catch {
+            /* An open trusted device can keep its local data while offline. */
+          }
+        };
+        await check();
+        setInterval(() => void check(), 60000);
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') void check();
+        });
+        return;
+      }
+      const update = registerSW({
+        onNeedRefresh() {
+          window.dispatchEvent(
+            new CustomEvent('aoiro-update', { detail: () => void update(true) }),
+          );
+        },
+      });
+    })
+    .catch((e: Error) => {
+      root.render(
+        <div className="boot">
+          <h1>帳簿を開けませんでした</h1>
+          <p>{e.message}</p>
+          <p>ブラウザの保存データは削除せず、別のタブを閉じて再読み込みしてください。</p>
+          <a
+            className="button secondary"
+            href={`${location.pathname}?recover=1${new URLSearchParams(location.search).get('book') === 'misc' ? '&book=misc' : ''}`}
+          >
+            Driveから環境を復旧
+          </a>
+          <button className="button" onClick={() => location.reload()}>
+            再読み込み
+          </button>
+        </div>,
+      );
     });
-  })
-  .catch((e: Error) => {
-    root.render(
-      <div className="boot">
-        <h1>帳簿を開けませんでした</h1>
-        <p>{e.message}</p>
-        <p>ブラウザの保存データは削除せず、別のタブを閉じて再読み込みしてください。</p>
-        <button className="button" onClick={() => location.reload()}>
-          再読み込み
-        </button>
-      </div>,
-    );
-  });
+}

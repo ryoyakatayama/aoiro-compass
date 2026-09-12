@@ -27,8 +27,11 @@ import {
 } from 'lucide-react';
 import type { Engine } from './lib/persistence';
 import { bookKind, bookLabel, switchBook } from './lib/book';
-import { demoMode } from './lib/persistence';
+import { demoMode, configureBackupUpload } from './lib/persistence';
 import { DriveAdapter } from './lib/drive';
+import { LedgerSync } from './lib/ledger-sync';
+import { exportSyncData } from './lib/sync-data';
+import { canonical } from './lib/sync-graph';
 import { AppContext, type Page } from './ui/context';
 import type { Transaction } from './domain/model';
 import { labels } from './domain/model';
@@ -65,6 +68,44 @@ export default function App({ engine }: { engine: Engine }) {
     [install, setInstall] = useState<any>(null),
     [update, setUpdate] = useState<(() => void) | null>(null);
   const drive = useMemo(() => new DriveAdapter(engine), [engine]);
+  const ledgerSync = useMemo(() => new LedgerSync(engine, drive), [engine, drive]);
+  const syncStatus = useSyncExternalStore(ledgerSync.subscribe, ledgerSync.getSnapshot);
+  useEffect(() => {
+    configureBackupUpload(async (bytes, id, reason) => {
+      if (demoMode || !drive.connected || !navigator.onLine) return false;
+      await drive.storeBackup(bytes, id, reason);
+      return true;
+    });
+    return () => configureBackupUpload();
+  }, [drive]);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let last = canonical(exportSyncData(engine.store));
+    const synchronize = () => {
+      if (document.visibilityState !== 'hidden') void ledgerSync.sync();
+    };
+    const unsubscribe = engine.subscribe(() => {
+      const next = canonical(exportSyncData(engine.store));
+      if (next === last) return;
+      last = next;
+      ledgerSync.markDirty();
+      clearTimeout(timer);
+      timer = setTimeout(synchronize, 2000);
+    });
+    const interval = setInterval(synchronize, 30000);
+    window.addEventListener('online', synchronize);
+    window.addEventListener('focus', synchronize);
+    document.addEventListener('visibilitychange', synchronize);
+    synchronize();
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+      unsubscribe();
+      window.removeEventListener('online', synchronize);
+      window.removeEventListener('focus', synchronize);
+      document.removeEventListener('visibilitychange', synchronize);
+    };
+  }, [engine, ledgerSync, connected, s.settings.ledger_sync_enabled]);
   useEffect(() => {
     if (!s.years.some((y) => y.year === year)) setYear(s.years[0].year);
   }, [s.years, year]);
@@ -121,6 +162,9 @@ export default function App({ engine }: { engine: Engine }) {
         setConnected(true);
       }
       await drive.sync(year, setJob);
+      await ledgerSync.sync();
+      if (ledgerSync.getSnapshot().phase !== 'synced')
+        throw new Error(ledgerSync.getSnapshot().message);
     }, 'Drive同期が完了しました');
     setJob('');
   };
@@ -169,6 +213,8 @@ export default function App({ engine }: { engine: Engine }) {
     sync,
     connected,
     setConnected,
+    ledgerSync,
+    syncStatus,
   };
   return (
     <AppContext.Provider value={context}>
@@ -217,7 +263,7 @@ export default function App({ engine }: { engine: Engine }) {
               </span>
               <strong>あなたの記録は、あなたのもの。</strong>
               <p>
-                帳簿はこの端末に。
+                帳簿は端末とDriveに。
                 <br />
                 原本はいつものDriveに。
               </p>
@@ -234,7 +280,7 @@ export default function App({ engine }: { engine: Engine }) {
               <span>事業情報・設定</span>
             </button>
             <div className="version">
-              AOIRO COMPASS <span>v0.1</span>
+              AOIRO COMPASS <span>v0.2</span>
             </div>
           </div>
         </aside>
@@ -272,7 +318,11 @@ export default function App({ engine }: { engine: Engine }) {
               )}
               <button className="drive-indicator" onClick={() => navigate('settings')}>
                 <span className={`status-dot ${drive.connected ? '' : 'disconnected'}`} />
-                {drive.connected ? 'Drive接続中' : 'ローカル保存'}
+                {syncStatus.phase === 'synced'
+                  ? 'Drive保存済み'
+                  : syncStatus.phase === 'syncing'
+                    ? 'Drive保存中'
+                    : 'Drive未保存・要確認'}
               </button>
               <label className="year-select">
                 <select
