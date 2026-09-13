@@ -90,6 +90,15 @@ export default function DriveHub() {
         description="最初にGoogleへ接続すると、編集中の帳簿と復元用バックアップを自動保存します。"
       />
       <DriveStatus />
+      <Card title="年度でまとまる保存先">
+        <p>
+          青色コンパス → 年度 → 書類の種類 →
+          必要な場合だけ事業所得・雑所得、の順に保存します。申告書・受信通知など本人全体の資料は「03_申告書類」に共通で保存します。
+        </p>
+        <p className="small muted">
+          両帳簿の「Drive保存先フォルダID」に同じ青色コンパスのIDを設定してください。取込待ち・証憑・帳簿・固定資産・バックアップは末端で所得を区別し、原本を別の帳簿へ自動取込しません。
+        </p>
+      </Card>
       {s.settings.ledger_sync_enabled === '0' && (
         <button
           className="button"

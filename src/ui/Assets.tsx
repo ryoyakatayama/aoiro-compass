@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { Plus, Calculator, Download } from 'lucide-react';
-import { useApp } from './context';
+import { useApp, AppContext } from './context';
 import { Card, PageHeading, Modal, Field, Empty } from './shared';
 import { newId, today, yen, type Asset } from '../domain/model';
 import { download } from '../lib/persistence';
 import { exportCsv } from '../lib/csv';
+import { archiveContext } from '../domain/filing-documents';
+import { bookHref, isMisc } from '../lib/book';
+type AssetReference = ReturnType<typeof archiveContext>['assetReferences'][number];
 import {
   straightLine,
   openingValue,
@@ -14,9 +17,57 @@ import {
 } from '../domain/depreciation';
 
 export default function Assets() {
+  const context = useApp();
+  const currentYear = new Date().getFullYear();
+  const [viewYear, setViewYear] = useState(currentYear);
+  const years = [...new Set([currentYear, ...context.s.years.map((y) => y.year)])].sort(
+    (a, b) => b - a,
+  );
+  return (
+    <AppContext.Provider value={{ ...context, year: viewYear, setYear: setViewYear }}>
+      <Card title="固定資産の表示時点">
+        <div className="actions">
+          <button
+            className={`button ${viewYear === currentYear ? '' : 'secondary'}`}
+            onClick={() => setViewYear(currentYear)}
+          >
+            現在の管理状況（{currentYear}年）
+          </button>
+          <Field label="固定資産の履歴年度">
+            <select value={viewYear} onChange={(e) => setViewYear(Number(e.target.value))}>
+              {years.map((y) => (
+                <option key={y} value={y}>
+                  {y}年{y === currentYear ? '・現在' : '・履歴'}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <p className="small muted">
+          このページは現在の年度を初期表示します。原台帳の確認済み残高と当年の記帳・参考計算を分けて表示します。
+        </p>
+      </Card>
+      <AssetWorkspace key={viewYear} />
+    </AppContext.Provider>
+  );
+}
+function AssetWorkspace() {
   const { s, year, openJournal } = useApp();
   const [adding, setAdding] = useState(false),
-    [depreciate, setDepreciate] = useState<Asset | null>(null);
+    [depreciate, setDepreciate] = useState<Asset | null>(null),
+    [reference, setReference] = useState<AssetReference | null>(null);
+  const source = archiveContext(
+    s,
+    Array.from({ length: Math.max(1, year - 1900 + 1) }, (_, i) => 1900 + i),
+  );
+  const referenceGroups = [
+    ...new Set(source.assetReferences.map((a) => a.name + '|' + a.acquisition_date)),
+  ].map((key) => {
+    const history = source.assetReferences
+      .filter((a) => a.name + '|' + a.acquisition_date === key)
+      .sort((a, b) => b.year - a.year);
+    return { key, history, actual: history.find((a) => !a.reference_only), latest: history[0] };
+  });
   const assets = s.assets.filter(
     (a) => a.year <= year && (!a.disposed_at || a.disposed_at >= year + '-01-01'),
   );
@@ -65,7 +116,7 @@ export default function Assets() {
     <>
       <PageHeading
         eyebrow="FIXED ASSETS"
-        title="減価償却を計算し、申告へ引き継ぐ。"
+        title={`${year}年の資産を確認し、減価償却へ。`}
         description="計算結果と前年末簿価を確認して下書きを作成し、仕訳を確定します。"
         actions={
           <>
@@ -83,9 +134,113 @@ export default function Assets() {
           </>
         }
       />
+      <Card
+        title="原台帳から読み込んだ資産"
+        subtitle={`${referenceGroups.length}件の資産・${source.assetReferences.length}件の年度明細。使用開始日等が未確認でも原資料の数値を閲覧できます。`}
+      >
+        {referenceGroups.length ? (
+          <div className="table-scroll">
+            <table aria-label="原台帳の固定資産一覧">
+              <thead>
+                <tr>
+                  <th>資産</th>
+                  <th>取得日 / 取得価額</th>
+                  <th>最新の実績台帳・未償却残高</th>
+                  <th>年度別の履歴</th>
+                  <th>登録</th>
+                </tr>
+              </thead>
+              <tbody>
+                {referenceGroups.map((r) => (
+                  <tr key={r.key}>
+                    <td>
+                      <strong>{r.latest.name}</strong>
+                      <small className="table-sub">
+                        {r.latest.useful_life_years}年 / 供用日{' '}
+                        {r.latest.in_service_date || '未確認'}
+                      </small>
+                    </td>
+                    <td>
+                      {r.latest.acquisition_date}
+                      <small className="table-sub">{yen(r.latest.acquisition_cost)}</small>
+                    </td>
+                    <td>
+                      {r.actual
+                        ? `${r.actual.year}年末 ${yen(r.actual.closing_book_value)}`
+                        : '実績未確認'}
+                      <small className="table-sub">
+                        {r.actual && r.actual.year < year ? '当年の増減・償却は未反映' : ''}
+                      </small>
+                    </td>
+                    <td>
+                      <details>
+                        <summary>{r.history.length}年分を表示</summary>
+                        {r.history.map((a) => (
+                          <p key={a.id}>
+                            {a.year}年{' '}
+                            {a.reference_only ? '参考計算・実績ではありません' : '原台帳の実績'}
+                            <br />
+                            償却 {yen(a.depreciation_amount)} / 経費 {yen(a.business_amount)} / 年末{' '}
+                            {yen(a.closing_book_value)}
+                            <br />
+                            <a
+                              href={source.documents.find((d) => d.id === a.source_id)?.drive_url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              原台帳を開く
+                            </a>
+                          </p>
+                        ))}
+                      </details>
+                    </td>
+                    <td>
+                      {s.assets.some(
+                        (a) =>
+                          a.name === r.latest.name &&
+                          a.acquisition_date === r.latest.acquisition_date,
+                      ) ? (
+                        '資産登録済み'
+                      ) : (
+                        <button
+                          className="button secondary compact"
+                          disabled={locked || !r.actual || r.actual.year !== year - 1}
+                          onClick={() => {
+                            setReference(r.actual!);
+                            setAdding(true);
+                          }}
+                        >
+                          供用日を確認して引継ぎ
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p>
+            読み込める資産明細が資料台帳にありません。「過年度資料」から固定資産明細付きの資料台帳を取り込むか、新しく登録してください。
+            {isMisc && <a href={bookHref('business', 'assets')}>事業所得の固定資産を見る</a>}
+          </p>
+        )}
+        <p className="small muted">
+          参考計算は当年の確定償却費へ加算しません。引継ぎでは供用日・償却方法・事業割合を確認し、前年末残高から登録します。
+        </p>
+        {source.documents
+          .filter((d) => /固定資産/.test(d.category + ' ' + d.name))
+          .map((d) => (
+            <p className="small" key={d.id}>
+              <a href={d.drive_url} target="_blank" rel="noreferrer">
+                {d.year}年 · {d.name}
+              </a>
+            </p>
+          ))}
+      </Card>
       <div className="metrics three-metrics">
         <div className="metric">
-          <div className="metric-title">管理中の資産</div>
+          <div className="metric-title">償却計算用の登録済み資産</div>
           <div className="metric-value">
             {assets.length}
             <small>件</small>
@@ -194,7 +349,7 @@ export default function Assets() {
             </table>
           </div>
         ) : (
-          <Empty title="固定資産を登録しましょう。">
+          <Empty title="償却計算用の資産登録はまだありません。">
             新規取得の機材・PC・車などに加え、他ソフトの前年末簿価から引き継げます。取得・期首残高の仕訳は別途確認してください。
           </Empty>
         )}
@@ -222,31 +377,49 @@ export default function Assets() {
           </a>
         </div>
       </Card>
-      {adding && <AssetForm onClose={() => setAdding(false)} />}
+      {adding && (
+        <AssetForm
+          reference={reference}
+          onClose={() => {
+            setAdding(false);
+            setReference(null);
+          }}
+        />
+      )}
       {depreciate && <DepreciationForm asset={depreciate} onClose={() => setDepreciate(null)} />}
     </>
   );
 }
-function AssetForm({ onClose }: { onClose: () => void }) {
+function AssetForm({
+  onClose,
+  reference,
+}: {
+  onClose: () => void;
+  reference?: AssetReference | null;
+}) {
   const { s, year, engine, run, busy } = useApp();
   const date = today().startsWith(String(year)) ? today() : year + '-01-01';
-  const [carry, setCarry] = useState(false),
-    [balance, setBalance] = useState(0),
-    [basis, setBasis] = useState('');
+  const [carry, setCarry] = useState(!!reference),
+    [balance, setBalance] = useState(reference?.closing_book_value || 0),
+    [basis, setBasis] = useState(
+      reference
+        ? `${reference.year}年固定資産原台帳 / 資料ID ${reference.source_id} / 供用日・方法・割合を本人確認`
+        : '',
+    );
   const [a, setA] = useState<Asset>({
     id: newId(),
     year,
-    name: '',
-    acquisition_date: date,
-    in_service_date: date,
-    acquisition_cost: 0,
+    name: reference?.name || '',
+    acquisition_date: reference?.acquisition_date || date,
+    in_service_date: reference ? reference.in_service_date || '' : date,
+    acquisition_cost: reference?.acquisition_cost || 0,
     asset_class: '工具器具備品',
     asset_account_id: '1500',
-    useful_life_years: 4,
+    useful_life_years: reference?.useful_life_years || 4,
     depreciation_method: 'straight_line',
-    business_use_ratio: 100,
+    business_use_ratio: reference?.business_use_ratio ?? 100,
     disposed_at: null,
-    note: '',
+    note: reference ? '原台帳からの引継ぎ。供用日・償却方法・事業割合を確認。' : '',
   });
   return (
     <Modal title="固定資産の登録・引継ぎ" onClose={onClose}>
@@ -316,7 +489,16 @@ function AssetForm({ onClose }: { onClose: () => void }) {
                 type="date"
                 required
                 value={a.acquisition_date}
-                onChange={(e) => setA({ ...a, acquisition_date: e.target.value })}
+                onChange={(e) =>
+                  setA({
+                    ...a,
+                    acquisition_date: e.target.value,
+                    in_service_date:
+                      a.in_service_date === a.acquisition_date || !a.in_service_date
+                        ? e.target.value
+                        : a.in_service_date,
+                  })
+                }
               />
             </Field>
             <Field label="事業供用日（実際に使い始めた日）">

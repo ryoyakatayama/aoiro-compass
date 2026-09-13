@@ -18,6 +18,7 @@ import { newId, now, yen } from '../domain/model';
 import { bookLabel, isMisc } from '../lib/book';
 import { zipFiles } from '../lib/packs';
 import { download } from '../lib/persistence';
+import FilingDocuments from './FilingDocuments';
 
 export default function Filing() {
   const { s, year, navigate, run, busy, engine, syncStatus } = useApp();
@@ -107,6 +108,7 @@ export default function Filing() {
           ここからの自動取得や常時接続は未対応です。公式サービスで取得した結果は申告書側に反映し、準備状況と保管先はこの画面に記録できます。
         </p>
       </Card>
+      <FilingDocuments key={year} />
       <div className="metrics three-metrics">
         <div className="metric">
           <div className="metric-title">総収入</div>

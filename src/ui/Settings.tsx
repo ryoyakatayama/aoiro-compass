@@ -8,6 +8,7 @@ import { bookLabel, bookKind } from '../lib/book';
 import { download, listBackups, demoMode, getBlob } from '../lib/persistence';
 import { zipFiles } from '../lib/packs';
 import SyncSettings, { CloudBackups } from './SyncSettings';
+import Activities from './Activities';
 export default function Settings() {
   const { s, engine, drive, year, run, busy, setConnected } = useApp();
   const [profile, setProfile] = useState<Profile>(s.profile),
@@ -118,7 +119,7 @@ export default function Settings() {
         description="相談の背景になる事業情報と、原本・帳簿の保存先を設定します。"
       />
       <Card
-        title="事業プロフィール"
+        title={bookKind === 'misc' ? '雑所得の共通プロフィール' : '事業プロフィール'}
         subtitle="相談パックに含めるかどうかは、毎回選択できます。口座番号・マイナンバー・パスワードは入力不要です。"
       >
         <form
@@ -178,6 +179,7 @@ export default function Settings() {
           </button>
         </form>
       </Card>
+      <Activities />
       <div id="drive-configuration" />
       <Card
         title="Google Driveとの連携"
@@ -214,6 +216,10 @@ export default function Settings() {
               void run(async () => {
                 await engine.write((st) => {
                   st.setSetting('google_client_id', client.trim());
+                  if ((st.setting('drive_root') || '') !== root.trim())
+                    st.run(
+                      "DELETE FROM settings WHERE key GLOB 'drive_year_*' OR key GLOB 'drive_inbox_*' OR key GLOB 'drive_books_*' OR key GLOB 'drive_backup_*' OR key GLOB 'drive_token_*' OR key GLOB 'drive_layout_*' OR key GLOB 'drive_evidence_*'",
+                    );
                   st.setSetting('drive_root', root.trim());
                 });
                 await drive.connect(client.trim());

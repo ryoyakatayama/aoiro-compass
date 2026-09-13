@@ -6,6 +6,7 @@ import { closingChecks } from '../domain/accounting';
 import { yearArchive } from '../lib/packs';
 import { download, demoMode } from '../lib/persistence';
 import { OwnerSettlement } from './ReceiptReview';
+import { filingCompletion } from '../domain/filing-documents';
 export default function Closing() {
   const { s, year, engine, drive, run, busy, navigate } = useApp();
   const fiscal = s.years.find((y) => y.year === year)!;
@@ -71,6 +72,11 @@ export default function Closing() {
       >
         <p>
           申告書・控除資料・他の所得・e-Taxの送信状況は「確定申告の準備」で別途確認します。年度のロックだけでは申告は完了しません。
+        </p>
+        <p className="notice">
+          申告後の保存資料：{filingCompletion(s, year).filter((r) => r.complete).length}/
+          {filingCompletion(s, year).length}
+          項目を確認。未確認の資料は年度ロック後も「確定申告の準備」から追加できます。
         </p>
         <button className="button secondary" onClick={() => navigate('filing')}>
           確定申告の準備を確認

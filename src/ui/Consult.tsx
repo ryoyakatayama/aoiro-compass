@@ -31,6 +31,8 @@ import {
   type PackFiles,
 } from '../lib/packs';
 import { download } from '../lib/persistence';
+import { incomeActivities } from '../domain/activities';
+import { isMisc } from '../lib/book';
 
 export default function Consult() {
   const { s, year, engine, run, busy, navigate } = useApp();
@@ -53,7 +55,7 @@ export default function Consult() {
     <>
       <PageHeading
         eyebrow="YOUR THINKING PARTNER"
-        title="事業のことから、相談しよう。"
+        title={isMisc ? '雑所得の実態から、相談しよう。' : '事業のことから、相談しよう。'}
         description="AIと壁打ちし、疑問を深めて、専門家への相談をもっと具体的に。"
         actions={
           <>
@@ -87,13 +89,16 @@ export default function Consult() {
           <div className="context-icon">
             <MessageCircle size={28} />
           </div>
-          <span className="small muted">今回の相談に添えられる事業情報</span>
+          <span className="small muted">
+            {isMisc ? '雑所得' : '事業'}の共通情報・{year}年に該当する活動
+          </span>
           <strong>{s.profile.industry || '業種を設定しましょう'}</strong>
           <p>
             {s.profile.description ||
               '仕事内容、顧客、収益モデルを入力すると、実態に即した相談ができます。'}
           </p>
           <div className="context-tags">
+            <span>{incomeActivities(s, [year]).length}件の活動プロフィール</span>
             <span>{s.profile.work_style ? '働き方 登録済み' : '働き方 未設定'}</span>
             <span>{s.profile.revenue_model ? '収益モデル 登録済み' : '収益モデル 未設定'}</span>
           </div>
@@ -316,7 +321,11 @@ function NewConsult({
               <Field label="相談のテーマ">
                 <select
                   value={type}
-                  onChange={(e) => setType(e.target.value as Audit['review_type'])}
+                  onChange={(e) => {
+                    setType(e.target.value as Audit['review_type']);
+                    setYears([year]);
+                    setOptions(defaultPackOptions(year));
+                  }}
                 >
                   {reviewTypes.map((t) => (
                     <option key={t} value={t}>
@@ -391,6 +400,7 @@ function NewConsult({
                   ['includeLedger', '仕訳・試算表・損益・月次推移'],
                   ['includeAssets', '固定資産と償却明細'],
                   ['includeEvidenceIndex', '証憑の索引（原本は含めない）'],
+                  ['includeSourceText', '過年度資料の抽出テキスト（OCR誤り・個人情報に注意）'],
                   ['includeNames', '屋号・証憑ファイル名も含める'],
                 ] as const
               ).map(([key, label]) => (
