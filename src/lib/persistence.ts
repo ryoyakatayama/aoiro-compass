@@ -1,4 +1,4 @@
-import { bookKind } from './book';
+import { bookKind, type BookKind } from './book';
 import initSqlJs from 'sql.js';
 import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
 import { openDB } from 'idb';
@@ -13,8 +13,45 @@ export function configureBackupUpload(upload?: typeof backupUploader) {
 }
 export const demoMode =
   typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('demo') === '1';
-const namespace =
-  (demoMode ? 'aoiro-compass-demo' : 'aoiro-compass') + (bookKind === 'misc' ? '-misc' : '');
+export const bookNamespace = (book: BookKind) =>
+  (demoMode ? 'aoiro-compass-demo' : 'aoiro-compass') + (book === 'misc' ? '-misc' : '');
+const namespace = bookNamespace(bookKind);
+// Read another book without creating an Engine, writing defaults or synchronizing it.
+export async function readBookSnapshot(book: BookKind): Promise<Snapshot | undefined> {
+  const name = bookNamespace(book);
+  return navigator.locks.request(name, async () => {
+    let bytes: Uint8Array | undefined;
+    if (navigator.storage?.getDirectory) {
+      const root = await navigator.storage.getDirectory();
+      try {
+        bytes = new Uint8Array(
+          await (await (await root.getFileHandle(`${name}.sqlite`)).getFile()).arrayBuffer(),
+        );
+      } catch (error) {
+        if ((error as DOMException).name !== 'NotFoundError') throw error;
+      }
+    }
+    if (!bytes) {
+      if (indexedDB.databases && !(await indexedDB.databases()).some((d) => d.name === name))
+        return undefined;
+      const db = await openDB(name);
+      try {
+        if (db.objectStoreNames.contains('files')) bytes = await db.get('files', 'ledger');
+      } finally {
+        db.close();
+      }
+    }
+    if (!bytes) return undefined;
+    const store = new Store(await getSQL(), bytes);
+    try {
+      if ((store.setting('income_category') || 'business') !== book)
+        throw new Error('比較対象の所得区分が一致しません');
+      return store.snapshot();
+    } finally {
+      store.close();
+    }
+  });
+}
 const dbPromise = () =>
   openDB(namespace, 1, {
     upgrade(db) {

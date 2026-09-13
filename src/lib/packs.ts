@@ -11,6 +11,8 @@ import {
 } from '../domain/model';
 import { report, monthly, continuity } from '../domain/accounting';
 import { filingFiles } from '../domain/filing';
+import { archiveContext, filingCompletion } from '../domain/filing-documents';
+import { incomeActivities } from '../domain/activities';
 import { bookKind } from './book';
 import { sha256, getBlob } from './persistence';
 import { exportCsv, journalCsv } from './csv';
@@ -54,6 +56,7 @@ export interface PackOptions {
   includeAssets: boolean;
   includeEvidenceIndex: boolean;
   includeNames: boolean;
+  includeSourceText?: boolean;
   from: string;
   to: string;
   account: string;
@@ -65,6 +68,7 @@ export const defaultPackOptions = (year: number): PackOptions => ({
   includeAssets: true,
   includeEvidenceIndex: true,
   includeNames: false,
+  includeSourceText: false,
   from: `${year}-01-01`,
   to: `${year}-12-31`,
   account: '',
@@ -110,6 +114,8 @@ export function buildAuditFiles(s: Snapshot, audit: Audit, options: PackOptions)
       law_basis_years: audit.law_basis_years,
       created_at: audit.created_at,
       data_completeness: s.years.filter((y) => audit.target_years.includes(y.year)),
+      context_note:
+        '共通プロフィールは現在の入力。活動プロフィールの適用年を確認し、過年度の実態は未確認なら質問してください。参考資産明細は正式な登録・確定償却と区別してください。',
       scope: options,
       original_evidence_included: false,
       contains_drafts: selected.some((t) => t.status === 'draft'),
@@ -124,6 +130,15 @@ export function buildAuditFiles(s: Snapshot, audit: Audit, options: PackOptions)
     const { business_name, ...profile } = s.profile;
     files['business_profile.json'] = json(
       safeData({ ...profile, ...(options.includeNames ? { business_name } : {}) }),
+    );
+    files['income_activities.json'] = json(
+      safeData({
+        income_category: s.settings.income_category || 'business',
+        target_years: audit.target_years,
+        activities: incomeActivities(s, audit.target_years),
+        warning:
+          '未記入の活動や過年度の状況を推定しないでください。共通プロフィールが過年度にも適用されるとは限りません。',
+      }),
     );
   }
   files['accounts.json'] = json(s.accounts);
@@ -171,6 +186,38 @@ export function buildAuditFiles(s: Snapshot, audit: Audit, options: PackOptions)
     );
     files['depreciation.json'] = json(
       safeData(s.depreciations.filter((d) => audit.target_years.includes(d.year))),
+    );
+    files['source_asset_references.json'] = json(
+      safeData(archiveContext(s, audit.target_years).assetReferences),
+    );
+  }
+  if (options.includeEvidenceIndex) {
+    const context = archiveContext(s, audit.target_years);
+    files['source_documents.json'] = json(
+      safeData(
+        context.documents.map((d) => ({
+          source_document_id: d.id,
+          year: d.year,
+          income_category: d.book,
+          category: d.category,
+          name: options.includeNames ? d.name : `資料 ${d.id}`,
+          sha256: d.sha256,
+          note: d.note,
+          ...(options.includeSourceText ? { extracted_text: d.text } : {}),
+          ...(options.includeNames ? { drive_url: d.drive_url } : {}),
+        })),
+      ),
+    );
+    files['source_issues.json'] = json(safeData(context.issues));
+    files['source_coverage.json'] = json({
+      archive_registered: context.registered,
+      documents: context.documents.length,
+      unresolved_issues: context.issues.filter((i) => i.response.status !== 'resolved').length,
+      warning:
+        '索引やOCRが存在しても資料の網羅性・正確性・仕訳への紐付け完了を意味しません。source_document_idはevidence_idと異なるためrequested_evidence_idsに入れず、本文で出典IDと必要資料を指定してください。',
+    });
+    files['filing_retention.json'] = json(
+      safeData(audit.target_years.map((year) => ({ year, items: filingCompletion(s, year) }))),
     );
   }
   if (options.includeEvidenceIndex)
@@ -308,4 +355,3 @@ export async function yearArchive(s: Snapshot, year: number, sqlite: Uint8Array)
     ),
   });
 }
-

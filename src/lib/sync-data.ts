@@ -10,6 +10,7 @@ import type { Entity, SyncData } from './sync-graph';
 import { archiveSyncValueSchema } from './sync-graph';
 import type { SqlValue } from 'sql.js';
 import { filingPrefix, validateFilingSetting } from '../domain/filing';
+import { activityPrefix, validateActivity } from '../domain/activities';
 
 const tables = [
   'fiscal_years',
@@ -73,6 +74,12 @@ export function exportSyncData(store: Store): SyncData {
     validateFilingSetting(String(row.key), String(row.value));
     data['shared:' + String(row.key)] = String(row.value);
   }
+  for (const row of store.all('SELECT key,value FROM settings WHERE key GLOB ?', [
+    activityPrefix + '*',
+  ])) {
+    validateActivity(String(row.key), String(row.value));
+    data['shared:' + String(row.key)] = String(row.value);
+  }
   return data;
 }
 export function importSyncData(store: Store, data: SyncData) {
@@ -129,6 +136,10 @@ export function importSyncData(store: Store, data: SyncData) {
       continue;
     }
     if (key === 'shared:drive_root' && typeof value === 'string') continue;
+    if (key.startsWith('shared:' + activityPrefix) && typeof value === 'string') {
+      validateActivity(key.slice(7), value);
+      continue;
+    }
     if (key.startsWith('shared:' + filingPrefix) && typeof value === 'string') {
       validateFilingSetting(key.slice(7), value);
       continue;
@@ -162,6 +173,10 @@ export function importSyncData(store: Store, data: SyncData) {
     if (key === 'shared:' + archiveSetting || key.startsWith('shared:' + archiveResponsePrefix))
       store.setSetting(key.slice(7), archiveValue(value));
   const previousRoot = store.setting('drive_root') || '';
+  store.run('DELETE FROM settings WHERE key GLOB ?', [activityPrefix + '*']);
+  for (const [key, value] of Object.entries(data))
+    if (key.startsWith('shared:' + activityPrefix) && typeof value === 'string')
+      store.setSetting(key.slice(7), value);
   store.run('DELETE FROM settings WHERE key GLOB ?', [filingPrefix + '*']);
   for (const [key, value] of Object.entries(data))
     if (key.startsWith('shared:' + filingPrefix) && typeof value === 'string')
@@ -170,7 +185,7 @@ export function importSyncData(store: Store, data: SyncData) {
   store.setSetting('drive_root', nextRoot);
   if (previousRoot !== nextRoot)
     store.run(
-      "DELETE FROM settings WHERE key GLOB 'drive_year_*' OR key GLOB 'drive_inbox_*' OR key GLOB 'drive_books_*' OR key GLOB 'drive_backup_*' OR key GLOB 'drive_token_*'",
+      "DELETE FROM settings WHERE key GLOB 'drive_year_*' OR key GLOB 'drive_inbox_*' OR key GLOB 'drive_books_*' OR key GLOB 'drive_backup_*' OR key GLOB 'drive_token_*' OR key GLOB 'drive_layout_*' OR key GLOB 'drive_evidence_*'",
     );
   for (const q of queued)
     if (store.all('SELECT id FROM evidences WHERE id=? AND drive_file_id IS NULL', [q.id]).length)

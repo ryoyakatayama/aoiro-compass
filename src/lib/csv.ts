@@ -94,4 +94,3 @@ export function journalCsv(s: Snapshot, year: number) {
       ),
   ]);
 }
-

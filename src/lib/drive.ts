@@ -298,34 +298,35 @@ export class DriveAdapter {
     return result.id as string;
   }
   async ensureFolders(year: number) {
-    let root = this.engine.snapshot.settings.drive_root;
-    if (root) {
-      const meta = await this.metadata(root);
-      if (meta.mimeType !== folderMime || meta.trashed)
-        throw new Error('保存先にはDriveフォルダIDを指定してください');
-      if (meta.shared) throw new Error('共有されたフォルダは原本保存先にできません');
-    } else {
-      root = await this.folder(isMisc ? '雑所得_青色コンパス' : '確定申告_青色コンパス');
-      await this.engine.write((s) => s.setSetting('drive_root', root));
-    }
-    const scopeRoot = isMisc ? await this.folder('雑所得', root) : root;
-    const y = await this.folder(String(year), scopeRoot);
-    const inbox = await this.folder('00_未処理', y);
-    for (const name of ['領収書', '請求書', 'その他']) await this.folder(name, inbox);
-    const evidence = await this.folder('01_証憑', y);
-    for (const name of ['01_経費', '02_売上', '03_銀行・カード', '04_その他'])
-      await this.folder(name, evidence);
-    const books = await this.folder('02_帳簿', y);
-    await this.folder('03_申告書類', y);
-    await this.folder('04_固定資産', y);
-    const backup = await this.folder('99_バックアップ', y);
-    await this.engine.write((s) => {
-      s.setSetting(`drive_year_${year}`, y);
-      s.setSetting(`drive_inbox_${year}`, inbox);
-      s.setSetting(`drive_books_${year}`, books);
-      s.setSetting(`drive_backup_${year}`, backup);
+    return navigator.locks.request('aoiro-drive-folders', async () => {
+      let root = this.engine.snapshot.settings.drive_root;
+      if (root) {
+        const meta = await this.metadata(root);
+        if (meta.mimeType !== folderMime || meta.trashed)
+          throw new Error('保存先にはDriveフォルダIDを指定してください');
+        if (meta.shared) throw new Error('共有されたフォルダは原本保存先にできません');
+      } else {
+        root = await this.folder('青色コンパス');
+        await this.engine.write((s) => s.setSetting('drive_root', root));
+      }
+      const y = await this.folder(String(year), root);
+      const label = isMisc ? '雑所得' : '事業所得';
+      const inbox = await this.folder(label, await this.folder('00_未処理', y));
+      const evidence = await this.folder(label, await this.folder('01_証憑', y));
+      const books = await this.folder(label, await this.folder('02_帳簿', y));
+      const filings = await this.folder('03_申告書類', y);
+      await this.folder(label, await this.folder('04_固定資産', y));
+      const backup = await this.folder(label, await this.folder('99_バックアップ', y));
+      await this.engine.write((s) => {
+        s.setSetting(`drive_year_${year}`, y);
+        s.setSetting(`drive_inbox_${year}`, inbox);
+        s.setSetting(`drive_books_${year}`, books);
+        s.setSetting(`drive_backup_${year}`, backup);
+        s.setSetting(`drive_evidence_${year}`, evidence);
+        s.setSetting(`drive_layout_${year}`, '2');
+      });
+      return { year: y, inbox, backup, books, filings, evidence };
     });
-    return { year: y, inbox, backup, books };
   }
   async upload(name: string, blob: Blob, parent: string, evidenceId?: string) {
     if (blob.size > 25 * 1024 * 1024) throw new Error('1ファイル25MB以下にしてください');
@@ -402,9 +403,18 @@ export class DriveAdapter {
   }
   async sync(year: number, onProgress?: (text: string) => void) {
     return navigator.locks.request('aoiro-drive-sync', async () => {
-      const folder =
-        this.engine.snapshot.settings[`drive_year_${year}`] ||
-        (await this.ensureFolders(year)).year;
+      const configured = this.engine.snapshot.settings;
+      const folders =
+        configured[`drive_layout_${year}`] === '2' &&
+        configured[`drive_inbox_${year}`] &&
+        configured[`drive_evidence_${year}`]
+          ? {
+              year: configured[`drive_year_${year}`],
+              inbox: configured[`drive_inbox_${year}`],
+              evidence: configured[`drive_evidence_${year}`],
+            }
+          : await this.ensureFolders(year);
+      const folder = folders.year;
       const start = await (await this.request('changes/startPageToken')).json();
       onProgress?.('原本をアップロードしています');
       await this.flushQueue(year);
@@ -420,7 +430,8 @@ export class DriveAdapter {
         }
       };
       onProgress?.('年度フォルダを確認しています');
-      await walk(folder);
+      await walk(folders.inbox);
+      await walk(folders.evidence);
       const current = this.engine.snapshot.evidences.filter(
         (e) => e.year === year && e.drive_file_id,
       );
