@@ -55,7 +55,7 @@ test('スマホで資料台帳を検索し確認事項へ回答できる', async
     true,
   );
 });
-async function ready(page: Page, url = '/') {
+async function ready(page: Page, url = '/#dashboard') {
   await page.goto(url);
   await expect(page.getByRole('heading', { level: 1 })).not.toHaveText('青色コンパス');
   await expect(page.getByText('帳簿を開けませんでした')).toHaveCount(0);
@@ -238,7 +238,7 @@ test('2つのタブから保存しても更新が失われない', async ({ page
 });
 test('スマホで仕訳入力中に勘定科目を登録できる', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await ready(page, '/?book=misc');
+  await ready(page, '/?book=misc#dashboard');
   await page.getByRole('button', { name: '取引を記帳', exact: true }).click();
   await page.getByLabel('摘要（取引内容）').fill('スマホから研修費を登録');
   await page.getByText('勘定科目が見つからないとき：ここで新しく登録', { exact: true }).click();
