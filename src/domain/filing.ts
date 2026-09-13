@@ -3,7 +3,12 @@ import { yearSchema, signedMoneySchema, moneySchema, type Snapshot } from './mod
 import { report, monthly, closingChecks } from './accounting';
 import { recordedBusinessAmount } from './depreciation';
 import { exportCsv, journalCsv } from '../lib/csv';
-
+import {
+  filingDocumentSchema,
+  filingDocumentKey,
+  filingDocuments,
+  filingCompletion,
+} from './filing-documents';
 
 export const filingSources = {
   start: 'https://www.keisan.nta.go.jp/kyoutu/ky/sm/top#bsctrl',
@@ -220,6 +225,9 @@ export function validateFilingSetting(key: string, value: string) {
     const v = filingDetailSchema.parse(parsed);
     if (key !== 'filing_detail_' + v.year + '_' + v.id)
       throw new Error('申告補足の識別子が一致しません');
+  } else if (key.startsWith('filing_document_')) {
+    const v = filingDocumentSchema.parse(parsed);
+    if (key !== filingDocumentKey(v)) throw new Error('申告保存資料の識別子が一致しません');
   } else throw new Error('未対応の申告準備データです');
 }
 export function filingState(s: Snapshot, year: number) {
@@ -286,6 +294,11 @@ export function filingFiles(s: Snapshot, year: number, book: string): Record<str
   const r = report(s, year),
     state = filingState(s, year);
   return {
+    '10_申告後の保存資料.json': JSON.stringify(
+      { year, documents: filingDocuments(s, year), completion: filingCompletion(s, year) },
+      null,
+      2,
+    ),
     'はじめに.txt':
       year +
       '年 ' +
@@ -394,4 +407,3 @@ export function filingFiles(s: Snapshot, year: number, book: string): Record<str
     '09_仕訳帳.csv': journalCsv(s, year),
   };
 }
-

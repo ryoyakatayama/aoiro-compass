@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { yearSchema } from './model';
+import { yearSchema, dateSchema, moneySchema } from './model';
 
 export const archiveUrlSchema = z
   .string()
@@ -49,6 +49,29 @@ export const archiveSchema = z
         }),
       )
       .max(500),
+    asset_references: z
+      .array(
+        z.object({
+          id,
+          source_id: id,
+          year: yearSchema,
+          book,
+          name: z.string().min(1).max(300),
+          acquisition_date: dateSchema,
+          acquisition_cost: moneySchema,
+          useful_life_years: z.number().int().min(1).max(100),
+          in_service_date: dateSchema.nullable(),
+          business_use_ratio: z.number().min(0).max(100).nullable(),
+          opening_book_value: moneySchema.nullable(),
+          depreciation_amount: moneySchema,
+          business_amount: moneySchema,
+          closing_book_value: moneySchema,
+          reference_only: z.boolean(),
+          note: z.string().max(2000),
+        }),
+      )
+      .max(2000)
+      .default([]),
   })
   .superRefine((value, ctx) => {
     for (const items of [value.documents, value.issues]) {
@@ -56,6 +79,11 @@ export const archiveSchema = z
         ctx.addIssue({ code: 'custom', message: '資料または確認事項のIDが重複しています' });
     }
     const ids = new Set(value.documents.map((d) => d.id));
+    if (
+      new Set(value.asset_references.map((a) => a.id)).size !== value.asset_references.length ||
+      value.asset_references.some((a) => !ids.has(a.source_id))
+    )
+      ctx.addIssue({ code: 'custom', message: '固定資産参考明細のID・出典を確認してください' });
     if (value.issues.some((i) => i.source_ids.some((source) => !ids.has(source))))
       ctx.addIssue({ code: 'custom', message: '確認事項の参照先資料がありません' });
   });
