@@ -287,6 +287,16 @@ small {
   display: flex;
   flex-direction: column;
   gap: 5px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.sidebar nav .nav-item {
+  flex-shrink: 0;
+}
+.sidebar > .brand,
+.sidebar > .workspace-label,
+.sidebar-bottom {
+  flex-shrink: 0;
 }
 .nav-item {
   display: flex;
@@ -3774,5 +3784,73 @@ th {
   .drive-status,
   .filing-path {
     display: none !important;
+  }
+}
+/* Cross-year comparison, income activity details and filing preservation. */
+.comparison-books {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding: 16px;
+  margin: 0 0 20px;
+  border: 1px solid #dbe6df;
+  border-radius: 12px;
+}
+.comparison-books label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 600;
+}
+.comparison-books input {
+  width: 18px;
+  height: 18px;
+}
+.comparison-chart {
+  display: block;
+  width: 100%;
+  max-height: 260px;
+  margin: 12px 0 22px;
+}
+.comparison-chart text {
+  fill: #50665d;
+  font: 12px sans-serif;
+}
+.income-tag {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: #eef4f0;
+  white-space: nowrap;
+}
+.activity-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 0;
+  border-bottom: 1px solid #e4eae5;
+}
+.activity-row p {
+  margin: 5px 0;
+  white-space: pre-wrap;
+}
+.filing-document-link {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+.block {
+  display: block;
+}
+@media (max-width: 640px) {
+  .activity-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .comparison-books {
+    gap: 18px;
   }
 }

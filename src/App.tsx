@@ -47,8 +47,10 @@ import Closing from './ui/Closing';
 import ArchivePage from './ui/Archive';
 import DriveHub, { DriveStatus } from './ui/DriveHub';
 import Filing from './ui/Filing';
+import Comparison from './ui/Comparison';
 const nav: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'dashboard', label: 'ダッシュボード', icon: LayoutDashboard },
+  { id: 'comparison', label: '年度・所得を比較', icon: ChartNoAxesCombined },
   { id: 'drive', label: 'Google Drive同期', icon: Cloud },
   { id: 'ledger', label: '仕訳・記帳', icon: BookOpen },
   { id: 'evidence', label: '証憑ライブラリ', icon: Files },
@@ -62,9 +64,12 @@ const nav: { id: Page; label: string; icon: typeof LayoutDashboard }[] = [
 ];
 export default function App({ engine }: { engine: Engine }) {
   const s = useSyncExternalStore(engine.subscribe, engine.getSnapshot);
-  const [page, setPage] = useState<Page>((location.hash.slice(1) as Page) || 'dashboard'),
+  const [page, setPage] = useState<Page>((location.hash.slice(1) as Page) || 'comparison'),
     [year, setYear] = useState(() => {
-      const saved = Number(localStorage.getItem(`aoiro-selected-year-${bookKind}-${demoMode}`));
+      const saved = Number(
+        new URLSearchParams(location.search).get('year') ||
+          localStorage.getItem(`aoiro-selected-year-${bookKind}-${demoMode}`),
+      );
       return s.years.some((y) => y.year === saved) ? saved : s.years[0].year;
     }),
     [mobile, setMobile] = useState(false),
@@ -122,7 +127,7 @@ export default function App({ engine }: { engine: Engine }) {
     if (!s.years.some((y) => y.year === year)) setYear(s.years[0].year);
   }, [s.years, year]);
   useEffect(() => {
-    const f = () => setPage((location.hash.slice(1) || 'dashboard') as Page);
+    const f = () => setPage((location.hash.slice(1) || 'comparison') as Page);
     window.addEventListener('hashchange', f);
     return () => window.removeEventListener('hashchange', f);
   }, []);
@@ -208,6 +213,7 @@ export default function App({ engine }: { engine: Engine }) {
   };
   const pageComponent = {
     dashboard: <Dashboard />,
+    comparison: <Comparison />,
     drive: <DriveHub />,
     filing: <Filing />,
     ledger: <Ledger />,
@@ -249,7 +255,7 @@ export default function App({ engine }: { engine: Engine }) {
           />
         )}
         <aside className={`sidebar ${mobile ? 'is-open' : ''}`}>
-          <a className="brand" href="#dashboard" onClick={() => navigate('dashboard')}>
+          <a className="brand" href="#comparison" onClick={() => navigate('comparison')}>
             <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" />
             <div>
               <strong>青色コンパス</strong>
@@ -302,7 +308,7 @@ export default function App({ engine }: { engine: Engine }) {
               <span>事業情報・設定</span>
             </button>
             <div className="version">
-              AOIRO COMPASS <span>v0.4</span>
+              AOIRO COMPASS <span>v0.5</span>
             </div>
           </div>
         </aside>
@@ -326,7 +332,7 @@ export default function App({ engine }: { engine: Engine }) {
                 className="book-select"
                 aria-label="所得区分・帳簿を切り替え"
                 value={bookKind}
-                disabled={!!editor}
+                disabled={!!editor || page === 'comparison'}
                 onChange={(e) => switchBook(e.target.value as 'business' | 'misc')}
               >
                 <option value="business">事業所得</option>
@@ -349,6 +355,7 @@ export default function App({ engine }: { engine: Engine }) {
               <label className="year-select">
                 <select
                   aria-label="会計年度"
+                  disabled={page === 'comparison' || page === 'assets'}
                   value={year}
                   onChange={(e) => setYear(Number(e.target.value))}
                 >
